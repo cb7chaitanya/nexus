@@ -1,0 +1,36 @@
+{
+  "name": "raas",
+  "private": true,
+  "version": "0.0.0",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "clean": "turbo run clean",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
+  },
+  "devDependencies": {
+    "@raas/config": "workspace:*",
+    "@types/node": "^20.14.0",
+    "dotenv-cli": "^7.4.2",
+    "eslint": "^9.9.0",
+    "prettier": "^3.3.3",
+    "turbo": "^2.1.1",
+    "typescript": "^5.5.4"
+  },
+  "prettier": "@raas/config/prettier",
+  "pnpm": {
+    "overrides": {
+      "eslint-plugin-react-hooks": "^5.1.0"
+    }
+  }
+}
