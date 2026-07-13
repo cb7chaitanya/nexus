@@ -1,0 +1,27 @@
+{
+  "name": "@raas/api",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "dotenv -e ../../.env -- tsx watch src/index.ts",
+    "start": "dotenv -e ../../.env -- node dist/index.js",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@raas/db": "workspace:*",
+    "@raas/logger": "workspace:*",
+    "@raas/shared": "workspace:*",
+    "fastify": "^5.0.0"
+  },
+  "devDependencies": {
+    "@raas/config": "workspace:*",
+    "@types/node": "^20.14.0",
+    "dotenv-cli": "^7.4.2",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4"
+  }
+}
