@@ -1,0 +1,15 @@
+// Foundation layer only — no models yet (see docs/implementation-plan.md,
+// "Do NOT add: Prisma models"). This file exists to prove the
+// datasource/generator/pgvector wiring works end to end before any schema
+// is layered on top of it.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pgvector(map: "vector")]
+}
