@@ -19,6 +19,13 @@
       "dependsOn": ["^build"],
       "outputs": []
     },
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": [],
+      // Integration tests against a live, stateful Postgres — never cache
+      // these as if they were pure/deterministic.
+      "cache": false
+    },
     "clean": {
       "cache": false
     }
