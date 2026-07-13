@@ -1,7 +1,11 @@
-// Foundation layer only — no models yet (see docs/implementation-plan.md,
-// "Do NOT add: Prisma models"). This file exists to prove the
-// datasource/generator/pgvector wiring works end to end before any schema
-// is layered on top of it.
+// Scope for this ticket: identity + tenant models only (User, Organization,
+// OrganizationMember, Workspace). KnowledgeBase/Document/DocumentChunk/etc.
+// land in later tickets — see docs/implementation-plan.md.
+//
+// Tenant isolation is enforced twice: Prisma-level `organizationId` filters
+// (via withTenantTransaction, see src/tenant.ts) AND Postgres Row-Level
+// Security as an independent backstop (see the RLS block appended by hand
+// to this schema's migration — Prisma cannot express RLS policies natively).
 
 generator client {
   provider        = "prisma-client-js"
@@ -12,4 +16,82 @@ datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
   extensions = [pgvector(map: "vector")]
+}
+
+// ───────────────────────── Identity ─────────────────────────
+// Not tenant-scoped: a User has no organizationId of its own — membership
+// (and therefore tenant association) is via OrganizationMember.
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  passwordHash  String?
+  name          String?
+  emailVerified Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  memberships OrganizationMember[]
+}
+
+// ───────────────────────── Organization ─────────────────────────
+// Not RLS-scoped: Organization *is* the tenant boundary, not tenant-scoped
+// data — it has no organizationId to filter on. This means org
+// name/slug/plan are visible to any DB connection regardless of tenant
+// context; a deliberate, low-blast-radius scope boundary (no document
+// content, credentials, or usage data lives here), not an oversight.
+// See docs/decisions.md for the full reasoning.
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  plan      String   @default("free") // free | pro | enterprise
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members    OrganizationMember[]
+  workspaces Workspace[]
+}
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+// ───────────────────────── Tenant-scoped: RLS-protected ─────────────────────────
+// OrganizationMember and Workspace both carry organizationId and have RLS
+// enabled + forced in this schema's migration, policy scoped to
+// current_setting('app.current_org_id'). See withTenantTransaction
+// (src/tenant.ts) — this is the only sanctioned way to query these tables.
+//
+// Known follow-up (not solved in this ticket, see decisions.md): a
+// userId-keyed query ("which orgs does this user belong to", needed for
+// login/org-switcher) has no single org context to scope by and is
+// unanswerable through withTenantTransaction as designed here.
+
+model OrganizationMember {
+  id             String   @id @default(uuid())
+  organizationId String
+  userId         String
+  role           OrgRole  @default(MEMBER)
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+}
+
+model Workspace {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  slug           String
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, slug])
 }
