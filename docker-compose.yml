@@ -1,0 +1,43 @@
+name: raas
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: raas
+      POSTGRES_PASSWORD: raas
+      POSTGRES_DB: raas
+    ports:
+      - "5432:5432"
+    volumes:
+      - raas_postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U raas -d raas"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # noeviction is redis's default with no maxmemory set, but this is
+    # pinned explicitly rather than relied on implicitly: BullMQ (added in
+    # a later ticket, see docs/implementation-plan.md §1.2) silently loses
+    # job data under any other eviction policy if this instance ever gets
+    # a maxmemory limit configured.
+    command: ["redis-server", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - raas_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  raas_postgres_data:
+  raas_redis_data:
