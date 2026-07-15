@@ -31,7 +31,8 @@ model User {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  memberships OrganizationMember[]
+  memberships   OrganizationMember[]
+  sentInvites   OrganizationInvite[]
 }
 
 // ───────────────────────── Organization ─────────────────────────
@@ -52,6 +53,7 @@ model Organization {
 
   members    OrganizationMember[]
   workspaces Workspace[]
+  invites    OrganizationInvite[]
 }
 
 enum OrgRole {
@@ -64,12 +66,16 @@ enum OrgRole {
 // OrganizationMember and Workspace both carry organizationId and have RLS
 // enabled + forced in this schema's migration, policy scoped to
 // current_setting('app.current_org_id'). See withTenantTransaction
-// (src/tenant.ts) — this is the only sanctioned way to query these tables.
+// (src/tenant.ts) — this is the only sanctioned way to query these tables
+// with an org already selected.
 //
-// Known follow-up (not solved in this ticket, see decisions.md): a
-// userId-keyed query ("which orgs does this user belong to", needed for
-// login/org-switcher) has no single org context to scope by and is
-// unanswerable through withTenantTransaction as designed here.
+// The userId-keyed "which orgs does this user belong to" follow-up flagged
+// here previously (needed for login/GET /auth/me, no single org context
+// yet) is resolved by the auth ticket's migration
+// (20260715_add_self_membership_lookup): a second, SELECT-only permissive
+// policy on OrganizationMember scoped by app.current_user_id, queried via
+// withUserContext (src/tenant.ts) — never a general tenant bypass, only
+// visibility into the calling user's own membership rows.
 
 model OrganizationMember {
   id             String   @id @default(uuid())
@@ -94,4 +100,34 @@ model Workspace {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@unique([organizationId, slug])
+}
+
+// ───────────────────────── Organization invites ─────────────────────────
+// Deliberately NOT RLS-scoped, same reasoning as the ApiKey model
+// architecture.md describes: authorization here is possession of a
+// high-entropy token, not tenant membership — accepting an invite happens
+// before the acceptor has any org context to scope a query by in the
+// first place, the same chicken-and-egg problem OrganizationMember has,
+// but the token itself is already the access-control mechanism, so a
+// second RLS policy would add complexity without adding safety. Any
+// future endpoint that lists invites for an org must filter by
+// organizationId explicitly in application code — there is no RLS backstop
+// on this table, by design.
+
+model OrganizationInvite {
+  id             String    @id @default(uuid())
+  organizationId String
+  email          String
+  role           OrgRole   @default(MEMBER)
+  hashedToken    String    @unique
+  invitedById    String
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy    User         @relation(fields: [invitedById], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
 }

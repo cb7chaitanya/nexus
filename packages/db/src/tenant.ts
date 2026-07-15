@@ -32,18 +32,26 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * the pool never carries a stale org context into someone else's query.
  *
  * On "what happens if a query reaches an RLS table without going through
- * this function": empirically, a Postgres connection that has NEVER once
- * referenced app.current_org_id raises a hard error (fail loud). But once
- * a pooled connection has been used by ANY withTenantTransaction call
- * (for any org), Postgres retains a session-local placeholder for that
- * GUC name for the rest of that connection's lifetime — later unscoped
- * queries on that SAME connection get back an empty string instead of an
- * error, which still matches no real organizationId and so still returns
- * zero rows. In a long-running pooled server this second case is the
- * common one, not the first. The security property that actually holds
- * unconditionally, verified both ways: a missing tenant context NEVER
- * returns another tenant's rows — it returns either an error or nothing,
- * never data. See docs/decisions.md for the full investigation.
+ * this function": for Workspace, empirically, a Postgres connection that
+ * has NEVER once referenced app.current_org_id raises a hard error (fail
+ * loud). But once a pooled connection has been used by ANY
+ * withTenantTransaction call (for any org), Postgres retains a
+ * session-local placeholder for that GUC name for the rest of that
+ * connection's lifetime — later unscoped queries on that SAME connection
+ * get back an empty string instead of an error, which still matches no
+ * real organizationId and so still returns zero rows. In a long-running
+ * pooled server this second case is the common one, not the first. The
+ * security property that actually holds unconditionally, verified both
+ * ways: a missing tenant context NEVER returns another tenant's rows — it
+ * returns either an error or nothing, never data. See docs/decisions.md
+ * for the full investigation.
+ *
+ * OrganizationMember's policy was changed (see migration
+ * 20260715081815_add_self_membership_lookup) to always use missing_ok on
+ * current_setting() — needed so the sibling self-lookup policy used by
+ * withUserContext below can actually work. It now always fails closed via
+ * an empty result rather than sometimes erroring; still zero data leakage,
+ * just uniform instead of connection-history-dependent.
  */
 export async function withTenantTransaction<T>(
   orgId: string,
@@ -55,6 +63,41 @@ export async function withTenantTransaction<T>(
 
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT set_config('app.current_org_id', ${orgId}, true)`;
+    return callback(tx);
+  });
+}
+
+/**
+ * Runs `callback` inside a single Postgres transaction with
+ * `app.current_user_id` set for the duration of that transaction.
+ *
+ * This is NOT a general tenant-context mechanism and must not be treated
+ * as an alternative to withTenantTransaction. It exists for exactly one
+ * purpose: answering "which orgs does this user belong to" — needed by
+ * login and GET /auth/me, where no org has been selected yet, so
+ * withTenantTransaction has no orgId to take. Only OrganizationMember has
+ * a policy that references app.current_user_id (self_membership_lookup,
+ * SELECT-only — see migration 20260715081815_add_self_membership_lookup),
+ * and it only ever grants visibility into the CALLING user's own
+ * membership rows, nothing about other users or other tenants' data. No
+ * other table's RLS policy references this session variable; using this
+ * function to query anything other than "my own memberships" relies on
+ * undefined behavior.
+ *
+ * Once an org has been selected (from the result of this call, or from a
+ * client-supplied org id validated against that result), every subsequent
+ * query goes back through withTenantTransaction like normal.
+ */
+export async function withUserContext<T>(
+  userId: string,
+  callback: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  if (!UUID_RE.test(userId)) {
+    throw new Error(`withUserContext: userId must be a UUID, got: ${JSON.stringify(userId)}`);
+  }
+
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
     return callback(tx);
   });
 }

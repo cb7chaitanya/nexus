@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { prisma, withTenantTransaction } from "./index.js";
+import { prisma, withTenantTransaction, withUserContext } from "./index.js";
 
 describe("tenant isolation (RLS)", () => {
   let orgA: { id: string };
@@ -148,5 +148,72 @@ describe("tenant isolation (RLS)", () => {
     } catch (err) {
       expect(err).toBeInstanceOf(Error);
     }
+  });
+});
+
+describe("self membership lookup (withUserContext)", () => {
+  let orgA: { id: string };
+  let orgB: { id: string };
+  let userA: { id: string };
+  let userB: { id: string };
+
+  beforeAll(async () => {
+    const suffix = randomUUID().slice(0, 8);
+
+    [orgA, orgB, userA, userB] = await Promise.all([
+      prisma.organization.create({ data: { name: `Org A ${suffix}`, slug: `org-a-${suffix}` } }),
+      prisma.organization.create({ data: { name: `Org B ${suffix}`, slug: `org-b-${suffix}` } }),
+      prisma.user.create({ data: { email: `user-a-${suffix}@example.com` } }),
+      prisma.user.create({ data: { email: `user-b-${suffix}@example.com` } }),
+    ]);
+
+    await withTenantTransaction(orgA.id, (tx) =>
+      tx.organizationMember.create({
+        data: { organizationId: orgA.id, userId: userA.id, role: "OWNER" },
+      }),
+    );
+    await withTenantTransaction(orgB.id, (tx) =>
+      tx.organizationMember.create({
+        data: { organizationId: orgB.id, userId: userB.id, role: "OWNER" },
+      }),
+    );
+  });
+
+  afterAll(async () => {
+    await prisma.organization.deleteMany({ where: { id: { in: [orgA.id, orgB.id] } } });
+    await prisma.user.deleteMany({ where: { id: { in: [userA.id, userB.id] } } });
+  });
+
+  it("lets a user see their own membership with no org context selected — this is the login/GET /auth/me path", async () => {
+    const rows = await withUserContext(userA.id, (tx) => tx.organizationMember.findMany());
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.userId).toBe(userA.id);
+    expect(rows[0]?.organizationId).toBe(orgA.id);
+  });
+
+  it("never returns another user's membership rows", async () => {
+    const rowsAsA = await withUserContext(userA.id, (tx) => tx.organizationMember.findMany());
+    const rowsAsB = await withUserContext(userB.id, (tx) => tx.organizationMember.findMany());
+
+    expect(rowsAsA.some((r) => r.userId === userB.id)).toBe(false);
+    expect(rowsAsB.some((r) => r.userId === userA.id)).toBe(false);
+  });
+
+  it("cannot write through the self-lookup policy — it's SELECT-only, org-scoped writes still require withTenantTransaction", async () => {
+    await expect(
+      withUserContext(userA.id, (tx) =>
+        tx.organizationMember.create({
+          data: { organizationId: orgA.id, userId: userB.id, role: "MEMBER" },
+        }),
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("withTenantTransaction is unaffected by the policy change — still correctly org-scoped", async () => {
+    const rows = await withTenantTransaction(orgA.id, (tx) => tx.organizationMember.findMany());
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.organizationId).toBe(orgA.id);
   });
 });
