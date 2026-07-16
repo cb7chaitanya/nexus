@@ -31,8 +31,9 @@ model User {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  memberships   OrganizationMember[]
-  sentInvites   OrganizationInvite[]
+  memberships       OrganizationMember[]
+  sentInvites       OrganizationInvite[]
+  uploadedDocuments Document[]
 }
 
 // ───────────────────────── Organization ─────────────────────────
@@ -51,9 +52,11 @@ model Organization {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  members    OrganizationMember[]
-  workspaces Workspace[]
-  invites    OrganizationInvite[]
+  members        OrganizationMember[]
+  workspaces     Workspace[]
+  invites        OrganizationInvite[]
+  knowledgeBases KnowledgeBase[]
+  documents      Document[]
 }
 
 enum OrgRole {
@@ -130,4 +133,72 @@ model OrganizationInvite {
   invitedBy    User         @relation(fields: [invitedById], references: [id], onDelete: Cascade)
 
   @@index([organizationId])
+}
+
+// ───────────────────────── Knowledge base / documents ─────────────────────────
+// Both tenant-scoped: RLS enabled + forced, same tenant_isolation pattern
+// as Workspace (missing_ok deliberately omitted — a query reaching either
+// table without going through withTenantTransaction should error loudly,
+// not silently return zero rows). Neither needs a self-lookup escape
+// hatch like OrganizationMember's: every route that touches a KB or
+// document requires the caller to assert an organizationId up front (see
+// apps/api's requireMembership), so there's no chicken-and-egg "which org
+// does this belong to" query to support.
+//
+// embeddingDim is fixed platform-wide for MVP (see @raas/shared's
+// PLATFORM_EMBEDDING_DIM, enforced at the API validation layer, not by a
+// CHECK constraint here) — pgvector requires a fixed column dimension per
+// table, so mixing embedding models within one KB is a real engineering
+// problem the platform doesn't support yet, not just a validation nicety.
+
+model KnowledgeBase {
+  id                String   @id @default(uuid())
+  organizationId    String
+  name              String
+  embeddingProvider String // "openai" | "cohere" | ...
+  embeddingModel    String // "text-embedding-3-small"
+  embeddingDim      Int
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  documents    Document[]
+
+  @@index([organizationId])
+}
+
+// Lifecycle for this ticket: PENDING_UPLOAD -> QUEUED -> PROCESSING -> READY
+// | FAILED. Extraction/chunking/embedding are not implemented yet (see
+// docs/implementation-plan.md RAAS-19) — PROCESSING is a single catch-all
+// state for now rather than the more granular EXTRACTING/CHUNKING/EMBEDDING
+// split architecture.md's full proposal describes; that split can replace
+// PROCESSING later without touching PENDING_UPLOAD/QUEUED/READY/FAILED.
+enum DocumentStatus {
+  PENDING_UPLOAD
+  QUEUED
+  PROCESSING
+  READY
+  FAILED
+}
+
+model Document {
+  id              String         @id @default(uuid())
+  organizationId  String
+  knowledgeBaseId String
+  fileName        String
+  mimeType        String
+  sizeBytes       Int
+  storageKey      String         @unique // S3/R2 object key
+  status          DocumentStatus @default(PENDING_UPLOAD)
+  failureReason   String?
+  uploadedById    String?
+  createdAt       DateTime       @default(now())
+  processedAt     DateTime?
+
+  organization  Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  knowledgeBase KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  uploadedBy    User?         @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([knowledgeBaseId, status])
 }

@@ -151,6 +151,124 @@ describe("tenant isolation (RLS)", () => {
   });
 });
 
+describe("tenant isolation (RLS) — KnowledgeBase / Document", () => {
+  let orgA: { id: string };
+  let orgB: { id: string };
+
+  beforeAll(async () => {
+    const suffix = randomUUID().slice(0, 8);
+
+    [orgA, orgB] = await Promise.all([
+      prisma.organization.create({ data: { name: `Org A ${suffix}`, slug: `org-a-kb-${suffix}` } }),
+      prisma.organization.create({ data: { name: `Org B ${suffix}`, slug: `org-b-kb-${suffix}` } }),
+    ]);
+  });
+
+  afterAll(async () => {
+    // Cascades to KnowledgeBase/Document via onDelete: Cascade.
+    await prisma.organization.deleteMany({ where: { id: { in: [orgA.id, orgB.id] } } });
+  });
+
+  it("returns only org A's KnowledgeBase when queried with org A's context", async () => {
+    await withTenantTransaction(orgA.id, (tx) =>
+      tx.knowledgeBase.create({
+        data: {
+          organizationId: orgA.id,
+          name: "Org A KB",
+          embeddingProvider: "openai",
+          embeddingModel: "text-embedding-3-small",
+          embeddingDim: 1536,
+        },
+      }),
+    );
+    await withTenantTransaction(orgB.id, (tx) =>
+      tx.knowledgeBase.create({
+        data: {
+          organizationId: orgB.id,
+          name: "Org B KB",
+          embeddingProvider: "openai",
+          embeddingModel: "text-embedding-3-small",
+          embeddingDim: 1536,
+        },
+      }),
+    );
+
+    const asOrgA = await withTenantTransaction(orgA.id, (tx) => tx.knowledgeBase.findMany());
+    expect(asOrgA).toHaveLength(1);
+    expect(asOrgA[0]?.organizationId).toBe(orgA.id);
+  });
+
+  it("rejects smuggling a KnowledgeBase row under another org's id (WITH CHECK)", async () => {
+    await expect(
+      withTenantTransaction(orgA.id, (tx) =>
+        tx.knowledgeBase.create({
+          data: {
+            organizationId: orgB.id,
+            name: "smuggled",
+            embeddingProvider: "openai",
+            embeddingModel: "text-embedding-3-small",
+            embeddingDim: 1536,
+          },
+        }),
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("never returns another tenant's Document rows", async () => {
+    const kbA = await withTenantTransaction(orgA.id, (tx) =>
+      tx.knowledgeBase.create({
+        data: {
+          organizationId: orgA.id,
+          name: "Org A KB 2",
+          embeddingProvider: "openai",
+          embeddingModel: "text-embedding-3-small",
+          embeddingDim: 1536,
+        },
+      }),
+    );
+    const kbB = await withTenantTransaction(orgB.id, (tx) =>
+      tx.knowledgeBase.create({
+        data: {
+          organizationId: orgB.id,
+          name: "Org B KB 2",
+          embeddingProvider: "openai",
+          embeddingModel: "text-embedding-3-small",
+          embeddingDim: 1536,
+        },
+      }),
+    );
+
+    await withTenantTransaction(orgA.id, (tx) =>
+      tx.document.create({
+        data: {
+          organizationId: orgA.id,
+          knowledgeBaseId: kbA.id,
+          fileName: "a.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 100,
+          storageKey: `org-a/${randomUUID()}`,
+        },
+      }),
+    );
+    await withTenantTransaction(orgB.id, (tx) =>
+      tx.document.create({
+        data: {
+          organizationId: orgB.id,
+          knowledgeBaseId: kbB.id,
+          fileName: "b.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 100,
+          storageKey: `org-b/${randomUUID()}`,
+        },
+      }),
+    );
+
+    const asOrgA = await withTenantTransaction(orgA.id, (tx) => tx.document.findMany());
+    expect(asOrgA.every((d) => d.organizationId === orgA.id)).toBe(true);
+    expect(asOrgA.some((d) => d.knowledgeBaseId === kbB.id)).toBe(false);
+  });
+});
+
 describe("self membership lookup (withUserContext)", () => {
   let orgA: { id: string };
   let orgB: { id: string };
