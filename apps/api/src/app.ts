@@ -4,8 +4,11 @@ import fastifyCookie from "@fastify/cookie";
 import { createLogger } from "@raas/logger";
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
 
+import { ensureBucketExists } from "./lib/storage.js";
 import { registerErrorHandler } from "./plugins/error-handler.js";
 import { authRoutes } from "./routes/auth.js";
+import { documentRoutes } from "./routes/documents.js";
+import { knowledgeBaseRoutes } from "./routes/knowledge-bases.js";
 import { organizationRoutes } from "./routes/organizations.js";
 
 /**
@@ -35,8 +38,14 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   registerErrorHandler(app);
 
+  // Dev/test convenience (MinIO doesn't pre-provision a bucket the way a
+  // real S3/R2 bucket is provisioned out of band) — see storage.ts.
+  await ensureBucketExists();
+
   await app.register(authRoutes);
   await app.register(organizationRoutes);
+  await app.register(knowledgeBaseRoutes);
+  await app.register(documentRoutes);
 
   return app;
 }
