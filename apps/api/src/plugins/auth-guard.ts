@@ -1,8 +1,8 @@
 import { ApiError } from "@raas/shared";
-import { withTenantTransaction } from "@raas/db";
 import type { OrgRole } from "@raas/db";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
+import { requireMembership } from "../lib/membership.js";
 import { resolveSession } from "../lib/session.js";
 import { hasAtLeastRole } from "../lib/roles.js";
 
@@ -55,18 +55,8 @@ export async function requireOrgMembership(request: FastifyRequest, _reply: Fast
     throw ApiError.notFound("Organization not found");
   }
 
-  const userId = request.userId;
-  const membership = await withTenantTransaction(organizationId, (tx) =>
-    tx.organizationMember.findUnique({
-      where: { organizationId_userId: { organizationId, userId } },
-    }),
-  );
-
-  if (!membership) {
-    throw ApiError.notFound("Organization not found");
-  }
-
-  request.membership = { organizationId, role: membership.role };
+  const role = await requireMembership(organizationId, request.userId);
+  request.membership = { organizationId, role };
 }
 
 /**
