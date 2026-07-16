@@ -6,6 +6,7 @@ export {
   type ApiErrorResponseBody,
 } from "./errors.js";
 export { parseOrThrow } from "./validate.js";
+export { MAX_UPLOAD_SIZE_BYTES, PLATFORM_EMBEDDING_DIM } from "./constants.js";
 export { emailSchema, loginSchema, passwordSchema, signupSchema, slugSchema } from "./schemas/auth.js";
 export type { LoginInput, SignupInput } from "./schemas/auth.js";
 export {
@@ -21,3 +22,7 @@ export type {
   CreateOrganizationInput,
   InviteMemberInput,
 } from "./schemas/organizations.js";
+export { createKnowledgeBaseSchema, listKnowledgeBasesQuerySchema } from "./schemas/knowledge-bases.js";
+export type { CreateKnowledgeBaseInput, ListKnowledgeBasesQuery } from "./schemas/knowledge-bases.js";
+export { completeDocumentSchema, presignDocumentSchema } from "./schemas/documents.js";
+export type { CompleteDocumentInput, PresignDocumentInput } from "./schemas/documents.js";
