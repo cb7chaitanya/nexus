@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 
 import fastifyCookie from "@fastify/cookie";
+import fastifyCors from "@fastify/cors";
 import { createLogger } from "@raas/logger";
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
 
+import { env } from "./env.js";
 import { ensureBucketExists } from "./lib/storage.js";
 import { registerErrorHandler } from "./plugins/error-handler.js";
 import { authRoutes } from "./routes/auth.js";
@@ -44,6 +46,20 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   await app.register(fastifyCookie);
+
+  // CORS/CSRF policy: see docs/cors-csrf-policy.md for the full decision.
+  // Exactly one allowed origin (WEB_ORIGIN), never a wildcard — this API
+  // uses cookie auth, so credentials must be explicitly allowed, and a
+  // wildcard origin is incompatible with credentialed requests anyway
+  // (browsers reject it). This is one layer of a three-layer CSRF
+  // defense alongside SameSite=Lax cookies and the JSON-only content
+  // type every mutating route already requires.
+  await app.register(fastifyCors, {
+    origin: env.WEB_ORIGIN,
+    credentials: true,
+    methods: ["GET", "POST", "PATCH", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  });
 
   registerErrorHandler(app);
 

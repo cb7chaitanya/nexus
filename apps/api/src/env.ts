@@ -15,6 +15,11 @@ export const env = {
   API_PORT: Number(process.env.API_PORT ?? 4000),
   API_HOST: process.env.API_HOST ?? "0.0.0.0",
   REDIS_URL: process.env.REDIS_URL ?? "redis://localhost:6379",
+  // CORS: apps/web and apps/api are separate origins in general (see
+  // docs/cors-csrf-policy.md for the full policy) — exactly one origin
+  // is allowed, with credentials, never a wildcard. Defaults to Next.js's
+  // standard local dev port; production must set this explicitly.
+  WEB_ORIGIN: process.env.WEB_ORIGIN ?? "http://localhost:3000",
   SESSION_JWT_SECRET: requireEnv("SESSION_JWT_SECRET"),
   SESSION_TTL_SECONDS: Number(process.env.SESSION_TTL_SECONDS ?? 60 * 60 * 24 * 7),
   S3_ENDPOINT: requireEnv("S3_ENDPOINT"),
