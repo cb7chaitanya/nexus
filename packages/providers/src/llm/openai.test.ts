@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { CircuitBreaker, CircuitBreakerOpenError } from "../resilience/circuit-breaker.js";
 import { OpenAIChatError, OpenAIChatProvider } from "./openai.js";
 
 /** Builds a real streaming Response whose body emits `rawChunks` as
@@ -73,5 +74,85 @@ describe("OpenAIChatProvider", () => {
     const provider = new OpenAIChatProvider({ apiKey: "sk-test", model: "gpt-4o-mini", fetchImpl });
 
     await expect(collect(provider.streamCompletion([{ role: "user", content: "hi" }]))).rejects.toThrow(OpenAIChatError);
+  });
+
+  it("does not retry a non-retryable 400 — fails on the first attempt", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response("bad request", { status: 400 }));
+    const provider = new OpenAIChatProvider({ apiKey: "sk-test", model: "gpt-4o-mini", fetchImpl, sleepImpl: async () => {} });
+
+    await expect(collect(provider.streamCompletion([{ role: "user", content: "hi" }]))).rejects.toThrow(OpenAIChatError);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries establishing the response on a 503, then succeeds and streams normally", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("service unavailable", { status: 503 }))
+      .mockResolvedValueOnce(sseResponse(['data: {"choices":[{"delta":{"content":"recovered"}}]}\n\n', "data: [DONE]\n\n"]));
+    const sleepImpl = vi.fn().mockResolvedValue(undefined);
+
+    const provider = new OpenAIChatProvider({ apiKey: "sk-test", model: "gpt-4o-mini", fetchImpl, sleepImpl, maxRetries: 2 });
+    const deltas = await collect(provider.streamCompletion([{ role: "user", content: "hi" }]));
+
+    expect(deltas).toEqual(["recovered"]);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(sleepImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("exhausts the retry budget on persistent 5xx failures and throws", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response("server error", { status: 500 }));
+    const sleepImpl = vi.fn().mockResolvedValue(undefined);
+
+    const provider = new OpenAIChatProvider({ apiKey: "sk-test", model: "gpt-4o-mini", fetchImpl, sleepImpl, maxRetries: 2 });
+
+    await expect(collect(provider.streamCompletion([{ role: "user", content: "hi" }]))).rejects.toThrow(OpenAIChatError);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it("aborts and retries a hung connection once connectTimeoutMs elapses", async () => {
+    const hungFetch = vi.fn().mockImplementation(
+      (_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        }),
+    );
+    const fetchImpl = vi
+      .fn()
+      .mockImplementationOnce(hungFetch)
+      .mockResolvedValueOnce(sseResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}\n\n', "data: [DONE]\n\n"]));
+    const sleepImpl = vi.fn().mockResolvedValue(undefined);
+
+    const provider = new OpenAIChatProvider({
+      apiKey: "sk-test",
+      model: "gpt-4o-mini",
+      fetchImpl,
+      sleepImpl,
+      maxRetries: 1,
+      connectTimeoutMs: 20,
+    });
+    const deltas = await collect(provider.streamCompletion([{ role: "user", content: "hi" }]));
+
+    expect(deltas).toEqual(["ok"]);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens the circuit after repeated failures and fails fast without calling fetch again", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response("server error", { status: 500 }));
+    const sleepImpl = vi.fn().mockResolvedValue(undefined);
+    const circuitBreaker = new CircuitBreaker({ failureThreshold: 2, cooldownMs: 10_000 });
+
+    const makeProvider = () =>
+      new OpenAIChatProvider({ apiKey: "sk-test", model: "gpt-4o-mini", fetchImpl, sleepImpl, maxRetries: 0, circuitBreaker });
+
+    // Two independent streamCompletion calls, each exhausting its own
+    // (maxRetries: 0) attempt — two failures total, reaching the
+    // breaker's threshold of 2.
+    await expect(collect(makeProvider().streamCompletion([{ role: "user", content: "hi" }]))).rejects.toThrow(OpenAIChatError);
+    await expect(collect(makeProvider().streamCompletion([{ role: "user", content: "hi" }]))).rejects.toThrow(OpenAIChatError);
+    expect(circuitBreaker.getState()).toBe("open");
+
+    fetchImpl.mockClear();
+    await expect(collect(makeProvider().streamCompletion([{ role: "user", content: "hi" }]))).rejects.toThrow(CircuitBreakerOpenError);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

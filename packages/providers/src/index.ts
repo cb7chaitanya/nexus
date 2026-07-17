@@ -9,3 +9,7 @@ export { OpenAIChatProvider, OpenAIChatError } from "./llm/openai.js";
 export type { OpenAIChatProviderOptions } from "./llm/openai.js";
 export { FakeLLMProvider } from "./llm/fake.js";
 export type { FakeLLMProviderOptions } from "./llm/fake.js";
+
+export { CircuitBreaker, CircuitBreakerOpenError } from "./resilience/circuit-breaker.js";
+export type { CircuitBreakerOptions, CircuitState } from "./resilience/circuit-breaker.js";
+export { TimeoutError, withTimeout } from "./resilience/timeout.js";
