@@ -57,6 +57,7 @@ model Organization {
   invites        OrganizationInvite[]
   knowledgeBases KnowledgeBase[]
   documents      Document[]
+  documentChunks DocumentChunk[]
 }
 
 enum OrgRole {
@@ -163,6 +164,7 @@ model KnowledgeBase {
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   documents    Document[]
+  chunks       DocumentChunk[]
 
   @@index([organizationId])
 }
@@ -195,10 +197,58 @@ model Document {
   createdAt       DateTime       @default(now())
   processedAt     DateTime?
 
-  organization  Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  knowledgeBase KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
-  uploadedBy    User?         @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  organization  Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  knowledgeBase KnowledgeBase   @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  uploadedBy    User?           @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  chunks        DocumentChunk[]
 
   @@index([organizationId])
   @@index([knowledgeBaseId, status])
+}
+
+// ───────────────────────── Document chunks ─────────────────────────
+// Written by apps/worker, not apps/api — the ingestion pipeline's worker
+// processes must apply the exact same RLS discipline as the API (set
+// app.current_org_id via withTenantTransaction before every write), never
+// a BYPASSRLS role. @raas/db's PrismaClient always connects as raas_app
+// (see src/client.ts), which is created NOBYPASSRLS in
+// infra/postgres/init.sql — this is structurally guaranteed, not just a
+// convention worker code has to remember.
+//
+// embedding is `Unsupported("vector(n)")` because Prisma has no native
+// pgvector type — it can be read via $queryRaw but not written through the
+// typed client, so writes to it use $executeRaw explicitly (see
+// apps/worker's embed-chunks processor). Nullable because chunk-text
+// creates the row (content/position) before embed-chunks fills in the
+// vector; a chunk with a null embedding is "chunked but not yet embedded,"
+// a real intermediate state, not a bug.
+//
+// @@unique([documentId, chunkIndex]) is what makes chunk-text idempotent
+// under retry: it upserts on this key instead of blindly inserting, so a
+// worker crash-and-retry mid-chunking cannot produce a duplicate set of
+// chunks for the same document (see docs/implementation-plan.md §1.1(d)).
+//
+// No vector index (HNSW) yet — retrieval doesn't exist as a feature until
+// a later ticket, and building/tuning that index only matters once query
+// performance is being measured against real data (see decisions.md ADR-2).
+model DocumentChunk {
+  id              String   @id @default(uuid())
+  organizationId  String
+  knowledgeBaseId String
+  documentId      String
+  chunkIndex      Int
+  content         String
+  tokenCount      Int
+  pageNumber      Int?
+  charStart       Int
+  charEnd         Int
+  embedding       Unsupported("vector(1536)")?
+  createdAt       DateTime @default(now())
+
+  organization  Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  knowledgeBase KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  document      Document      @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, chunkIndex])
+  @@index([organizationId])
 }

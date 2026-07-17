@@ -267,6 +267,163 @@ describe("tenant isolation (RLS) — KnowledgeBase / Document", () => {
     expect(asOrgA.every((d) => d.organizationId === orgA.id)).toBe(true);
     expect(asOrgA.some((d) => d.knowledgeBaseId === kbB.id)).toBe(false);
   });
+
+  it("never returns another tenant's DocumentChunk rows, including via raw SQL writes to the vector column", async () => {
+    const kbA = await withTenantTransaction(orgA.id, (tx) =>
+      tx.knowledgeBase.create({
+        data: {
+          organizationId: orgA.id,
+          name: "Org A KB 3",
+          embeddingProvider: "openai",
+          embeddingModel: "text-embedding-3-small",
+          embeddingDim: 1536,
+        },
+      }),
+    );
+    const kbB = await withTenantTransaction(orgB.id, (tx) =>
+      tx.knowledgeBase.create({
+        data: {
+          organizationId: orgB.id,
+          name: "Org B KB 3",
+          embeddingProvider: "openai",
+          embeddingModel: "text-embedding-3-small",
+          embeddingDim: 1536,
+        },
+      }),
+    );
+    const docA = await withTenantTransaction(orgA.id, (tx) =>
+      tx.document.create({
+        data: {
+          organizationId: orgA.id,
+          knowledgeBaseId: kbA.id,
+          fileName: "a-chunks.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 100,
+          storageKey: `org-a/${randomUUID()}`,
+        },
+      }),
+    );
+    const docB = await withTenantTransaction(orgB.id, (tx) =>
+      tx.document.create({
+        data: {
+          organizationId: orgB.id,
+          knowledgeBaseId: kbB.id,
+          fileName: "b-chunks.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 100,
+          storageKey: `org-b/${randomUUID()}`,
+        },
+      }),
+    );
+
+    const chunkA = await withTenantTransaction(orgA.id, (tx) =>
+      tx.documentChunk.upsert({
+        where: { documentId_chunkIndex: { documentId: docA.id, chunkIndex: 0 } },
+        create: {
+          organizationId: orgA.id,
+          knowledgeBaseId: kbA.id,
+          documentId: docA.id,
+          chunkIndex: 0,
+          content: "org a content",
+          tokenCount: 3,
+          charStart: 0,
+          charEnd: 13,
+        },
+        update: {},
+      }),
+    );
+    await withTenantTransaction(orgB.id, (tx) =>
+      tx.documentChunk.upsert({
+        where: { documentId_chunkIndex: { documentId: docB.id, chunkIndex: 0 } },
+        create: {
+          organizationId: orgB.id,
+          knowledgeBaseId: kbB.id,
+          documentId: docB.id,
+          chunkIndex: 0,
+          content: "org b content",
+          tokenCount: 3,
+          charStart: 0,
+          charEnd: 13,
+        },
+        update: {},
+      }),
+    );
+
+    // embed-chunks writes the vector column via $executeRaw (Unsupported
+    // type — Prisma's typed client can't write it). Verify that write path
+    // is scoped by RLS too, not just the typed upsert above.
+    const fakeVector = `[${Array.from({ length: 1536 }, () => "0").join(",")}]`;
+    await withTenantTransaction(orgA.id, (tx) =>
+      tx.$executeRaw`UPDATE "DocumentChunk" SET embedding = ${fakeVector}::vector WHERE id = ${chunkA.id}`,
+    );
+
+    const asOrgA = await withTenantTransaction(orgA.id, (tx) => tx.documentChunk.findMany());
+    expect(asOrgA.every((c) => c.organizationId === orgA.id)).toBe(true);
+    expect(asOrgA.some((c) => c.documentId === docB.id)).toBe(false);
+
+    // Cross-tenant raw write: org B's context must not be able to touch org
+    // A's chunk row, even via a raw UPDATE targeting its id directly.
+    const crossTenantUpdate = await withTenantTransaction(
+      orgB.id,
+      (tx) => tx.$executeRaw`UPDATE "DocumentChunk" SET embedding = ${fakeVector}::vector WHERE id = ${chunkA.id}`,
+    );
+    expect(crossTenantUpdate).toBe(0);
+  });
+
+  it("rejects a duplicate (documentId, chunkIndex) insert — the constraint idempotent chunk-text retries rely on", async () => {
+    const kb = await withTenantTransaction(orgA.id, (tx) =>
+      tx.knowledgeBase.create({
+        data: {
+          organizationId: orgA.id,
+          name: "Org A KB 4",
+          embeddingProvider: "openai",
+          embeddingModel: "text-embedding-3-small",
+          embeddingDim: 1536,
+        },
+      }),
+    );
+    const doc = await withTenantTransaction(orgA.id, (tx) =>
+      tx.document.create({
+        data: {
+          organizationId: orgA.id,
+          knowledgeBaseId: kb.id,
+          fileName: "dupe.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 100,
+          storageKey: `org-a/${randomUUID()}`,
+        },
+      }),
+    );
+
+    const chunkData = {
+      organizationId: orgA.id,
+      knowledgeBaseId: kb.id,
+      documentId: doc.id,
+      chunkIndex: 0,
+      content: "first",
+      tokenCount: 1,
+      charStart: 0,
+      charEnd: 5,
+    };
+
+    await withTenantTransaction(orgA.id, (tx) => tx.documentChunk.create({ data: chunkData }));
+
+    await expect(
+      withTenantTransaction(orgA.id, (tx) => tx.documentChunk.create({ data: chunkData })),
+    ).rejects.toThrow();
+
+    // But upserting on the unique key is idempotent, which is the actual
+    // mechanism chunk-text relies on for retry safety.
+    await expect(
+      withTenantTransaction(orgA.id, (tx) =>
+        tx.documentChunk.upsert({
+          where: { documentId_chunkIndex: { documentId: doc.id, chunkIndex: 0 } },
+          create: chunkData,
+          update: { content: "updated" },
+        }),
+      ),
+    ).resolves.toMatchObject({ content: "updated" });
+  });
 });
 
 describe("self membership lookup (withUserContext)", () => {

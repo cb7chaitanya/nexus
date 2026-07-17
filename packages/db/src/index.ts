@@ -10,4 +10,5 @@ export type {
   KnowledgeBase,
   Document,
   DocumentStatus,
+  DocumentChunk,
 } from "@prisma/client";
