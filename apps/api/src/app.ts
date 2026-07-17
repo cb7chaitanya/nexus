@@ -2,16 +2,19 @@ import { randomUUID } from "node:crypto";
 
 import fastifyCookie from "@fastify/cookie";
 import fastifyCors from "@fastify/cors";
+import fastifyHelmet from "@fastify/helmet";
 import { createLogger } from "@raas/logger";
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
 
 import { env } from "./env.js";
+import { GLOBAL_BODY_LIMIT_BYTES } from "./lib/body-limits.js";
 import { ensureBucketExists } from "./lib/storage.js";
 import { registerErrorHandler } from "./plugins/error-handler.js";
 import { authRoutes } from "./routes/auth.js";
 import { chatRoutes } from "./routes/chat.js";
 import { conversationRoutes } from "./routes/conversations.js";
 import { documentRoutes } from "./routes/documents.js";
+import { healthRoutes } from "./routes/health.js";
 import { knowledgeBaseRoutes } from "./routes/knowledge-bases.js";
 import { organizationRoutes } from "./routes/organizations.js";
 import { usageRoutes } from "./routes/usage.js";
@@ -44,9 +47,49 @@ export async function buildApp(): Promise<FastifyInstance> {
     // back to the raw socket address, which is what request.ip already
     // was without this).
     trustProxy: true,
+    // Explicit ceiling on every request body (lib/body-limits.ts) —
+    // previously Fastify's own undocumented 1 MiB default. Per-route
+    // overrides (tighter, for the document metadata routes) are set at
+    // those routes directly.
+    bodyLimit: GLOBAL_BODY_LIMIT_BYTES,
   });
 
   await app.register(fastifyCookie);
+
+  // Security headers (docs/decisions.md's production-hardening ticket).
+  // apps/api is a JSON-only API — it never serves HTML/CSS/JS to a
+  // browser, so helmet's default Content-Security-Policy directives
+  // (oriented at HTML-serving apps: 'self' script-src/style-src/etc.)
+  // don't protect anything real here. Locking to 'none' is the
+  // "appropriate" CSP for a pure API: defense in depth against a
+  // response somehow being rendered as HTML, paired with the default
+  // X-Content-Type-Options: nosniff (stops a browser from executing a
+  // misidentified JSON response as script in the first place). This API
+  // is also never legitimately framed, hence X-Frame-Options: DENY
+  // rather than helmet's default SAMEORIGIN.
+  await app.register(fastifyHelmet, {
+    contentSecurityPolicy: {
+      directives: { defaultSrc: ["'none'"], frameAncestors: ["'none'"] },
+    },
+    xFrameOptions: { action: "deny" },
+    // apps/web and apps/api are deliberately separate origins (see
+    // docs/cors-csrf-policy.md) — helmet's default
+    // Cross-Origin-Resource-Policy: same-origin makes browsers refuse to
+    // deliver a cross-origin fetch() response to the page that requested
+    // it, REGARDLESS of the Access-Control-* headers below. Left at the
+    // default here, helmet would silently break every real request
+    // apps/web makes to this API. "cross-origin" is required, not just
+    // permissive.
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    // Strict-Transport-Security tells a browser "always use HTTPS for
+    // this host from now on" — only true when this deployment is
+    // actually terminated over HTTPS (a real production deployment
+    // behind a TLS-terminating load balancer/ingress). Gated on
+    // NODE_ENV the same way lib/cookies.ts already gates the session
+    // cookie's `secure` flag — sending HSTS over local/dev plain HTTP
+    // would be actively wrong, not merely unnecessary.
+    hsts: env.NODE_ENV === "production" ? { maxAge: 15_552_000, includeSubDomains: true } : false,
+  });
 
   // CORS/CSRF policy: see docs/cors-csrf-policy.md for the full decision.
   // Exactly one allowed origin (WEB_ORIGIN), never a wildcard — this API
@@ -68,6 +111,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   // real S3/R2 bucket is provisioned out of band) — see storage.ts.
   await ensureBucketExists();
 
+  await app.register(healthRoutes);
   await app.register(authRoutes);
   await app.register(organizationRoutes);
   await app.register(knowledgeBaseRoutes);
