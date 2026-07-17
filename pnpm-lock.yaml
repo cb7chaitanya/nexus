@@ -47,12 +47,18 @@ importers:
       '@raas/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@raas/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@raas/db':
         specifier: workspace:*
         version: link:../../packages/db
       '@raas/logger':
         specifier: workspace:*
         version: link:../../packages/logger
+      '@raas/providers':
+        specifier: workspace:*
+        version: link:../../packages/providers
       '@raas/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -207,6 +213,28 @@ importers:
       typescript-eslint:
         specifier: ^8.2.0
         version: 8.64.0(eslint@9.39.5)(typescript@5.9.3)
+
+  packages/core:
+    dependencies:
+      '@raas/db':
+        specifier: workspace:*
+        version: link:../db
+      '@raas/providers':
+        specifier: workspace:*
+        version: link:../providers
+    devDependencies:
+      '@raas/config':
+        specifier: workspace:*
+        version: link:../config
+      dotenv-cli:
+        specifier: ^7.4.2
+        version: 7.4.4
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.19.43)
 
   packages/db:
     dependencies:

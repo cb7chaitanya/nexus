@@ -26,5 +26,20 @@ export const env = {
   // path-style since MinIO is the common local/test case — set explicitly
   // to "false" for real S3 in prod.
   S3_FORCE_PATH_STYLE: process.env.S3_FORCE_PATH_STYLE !== "false",
+  // "fake" is a real, documented provider choice (@raas/providers), not
+  // just a test mock — see apps/worker/src/env.ts, which this mirrors.
+  // Defaults to "openai" so a misconfigured production env fails loudly
+  // (missing OPENAI_API_KEY) rather than silently answering with fake
+  // embeddings/text.
+  EMBEDDING_PROVIDER: (process.env.EMBEDDING_PROVIDER ?? "openai") as "openai" | "fake",
+  OPENAI_EMBEDDING_BATCH_SIZE: Number(process.env.OPENAI_EMBEDDING_BATCH_SIZE ?? 100),
+  FAKE_EMBEDDING_DELAY_MS: Number(process.env.FAKE_EMBEDDING_DELAY_MS ?? 0),
+  LLM_PROVIDER: (process.env.LLM_PROVIDER ?? "openai") as "openai" | "fake",
+  OPENAI_CHAT_MODEL: process.env.OPENAI_CHAT_MODEL ?? "gpt-4o-mini",
+  FAKE_LLM_DELAY_MS: Number(process.env.FAKE_LLM_DELAY_MS ?? 0),
+  // Required unless BOTH providers are set to "fake" — either provider
+  // being "openai" means a real key is load-bearing.
+  OPENAI_API_KEY:
+    process.env.EMBEDDING_PROVIDER === "fake" && process.env.LLM_PROVIDER === "fake" ? (process.env.OPENAI_API_KEY ?? "") : requireEnv("OPENAI_API_KEY"),
   NODE_ENV: process.env.NODE_ENV ?? "development",
 };

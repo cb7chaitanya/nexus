@@ -7,6 +7,7 @@ import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
 import { ensureBucketExists } from "./lib/storage.js";
 import { registerErrorHandler } from "./plugins/error-handler.js";
 import { authRoutes } from "./routes/auth.js";
+import { chatRoutes } from "./routes/chat.js";
 import { documentRoutes } from "./routes/documents.js";
 import { knowledgeBaseRoutes } from "./routes/knowledge-bases.js";
 import { organizationRoutes } from "./routes/organizations.js";
@@ -46,6 +47,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(organizationRoutes);
   await app.register(knowledgeBaseRoutes);
   await app.register(documentRoutes);
+  await app.register(chatRoutes);
 
   return app;
 }
