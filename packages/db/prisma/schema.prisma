@@ -63,6 +63,7 @@ model Organization {
   usageEvents    UsageEvent[]
   conversations  Conversation[]
   messages       Message[]
+  usageLimit     OrganizationUsageLimit?
 }
 
 enum OrgRole {
@@ -296,6 +297,27 @@ model UsageEvent {
   user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, type, createdAt])
+}
+
+// ───────────────────────── Usage limits (quotas) ─────────────────────────
+// Tenant-scoped (RLS enabled + forced, same tenant_isolation pattern as
+// DocumentChunk/UsageEvent). One row per organization, created lazily on
+// first override — an org with no row here runs on the platform-wide
+// defaults read from apps/api's and apps/worker's env (see
+// @raas/usage's getOrganizationDailyLimit), so this table only needs a
+// row when an org's ceiling actually deviates from the default. Primary
+// key is organizationId itself (one row per org, not a synthetic id) —
+// same shape as a 1:1 config extension of Organization would take if
+// Prisma allowed extending a model directly.
+model OrganizationUsageLimit {
+  organizationId           String   @id
+  maxDocumentsPerDay       Int
+  maxEmbeddingTokensPerDay Int
+  maxChatTokensPerDay      Int
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 }
 
 // ───────────────────────── Chat memory ─────────────────────────

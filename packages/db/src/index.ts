@@ -13,6 +13,7 @@ export type {
   DocumentChunk,
   UsageEvent,
   UsageEventType,
+  OrganizationUsageLimit,
   Conversation,
   Message,
   MessageRole,
