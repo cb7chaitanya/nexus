@@ -26,3 +26,5 @@ export { createKnowledgeBaseSchema, listKnowledgeBasesQuerySchema } from "./sche
 export type { CreateKnowledgeBaseInput, ListKnowledgeBasesQuery } from "./schemas/knowledge-bases.js";
 export { completeDocumentSchema, presignDocumentSchema } from "./schemas/documents.js";
 export type { CompleteDocumentInput, PresignDocumentInput } from "./schemas/documents.js";
+export { chatSchema } from "./schemas/chat.js";
+export type { ChatInput } from "./schemas/chat.js";
