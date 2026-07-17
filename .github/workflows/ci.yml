@@ -1,0 +1,138 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A new push to the same PR/branch supersedes the in-flight run instead of
+# queuing behind it.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22.14.0"
+  PNPM_VERSION: "9.15.4"
+
+jobs:
+  # Install, lint, typecheck, build, run tests, verify migrations — on
+  # every PR (and on push to main, so main itself is never left broken).
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: raas
+          POSTGRES_PASSWORD: raas
+          POSTGRES_DB: raas
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U raas -d raas"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # infra/postgres/init.sql (raas_app role + pgvector extension) only
+      # runs automatically via docker-entrypoint-initdb.d on the compose
+      # postgres image — a GitHub Actions `services:` container has no
+      # equivalent hook, so it's applied by hand against the already-healthy
+      # service container instead.
+      - name: Apply local Postgres bootstrap (raas_app role, pgvector extension)
+        run: |
+          PGPASSWORD=raas psql -h localhost -U raas -d raas -v ON_ERROR_STOP=1 -f infra/postgres/init.sql
+
+      # Every app script that touches the DB/Redis wraps itself in
+      # `dotenv -e ../../.env`, so one root .env is the single source of
+      # truth CI needs too. .env.example's values already match this
+      # job's service containers 1:1 (same DB/Redis defaults
+      # docker-compose.yml uses for local dev) — see .env.example's own
+      # header comment.
+      - name: Write CI .env
+        run: cp .env.example .env
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Verify Prisma migrations apply cleanly
+        working-directory: packages/db
+        run: |
+          pnpm exec prisma validate
+          pnpm exec prisma migrate deploy
+          pnpm exec prisma migrate status
+        env:
+          DATABASE_URL: postgresql://raas:raas@localhost:5432/raas?schema=public
+
+      - name: Test
+        run: pnpm run test
+        env:
+          # Redundant with the .env file's own value for the same var,
+          # kept explicit so CI doesn't depend on that file's contents for
+          # correctness — only for the parts (S3/session/provider config)
+          # that have no meaningful default outside a real deployment.
+          NODE_ENV: test
+
+  # Build (and, on main, publish) the three deployable images from
+  # requirement 1 — gated to main only, per requirement 3, so a PR from an
+  # untrusted fork can't push to the registry.
+  build-images:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        app: [api, worker, web]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/${{ matrix.app }}/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}-${{ matrix.app }}:latest
+            ghcr.io/${{ github.repository }}-${{ matrix.app }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
