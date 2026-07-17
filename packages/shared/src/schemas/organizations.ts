@@ -34,3 +34,27 @@ export type ChangeMemberRoleInput = z.infer<typeof changeMemberRoleSchema>;
 
 export const listMembersQuerySchema = cursorPaginationSchema;
 export type ListMembersQuery = z.infer<typeof listMembersQuerySchema>;
+
+// PATCH /organizations/:id — plan is a free-text-ish enum here (no
+// billing integration exists yet to validate against), matching
+// Organization.plan's own "free | pro | enterprise" comment in
+// schema.prisma.
+export const updateOrganizationSchema = z.object({
+  name: z.string().trim().min(1).max(200).optional(),
+  plan: z.enum(["free", "pro", "enterprise"]).optional(),
+});
+export type UpdateOrganizationInput = z.infer<typeof updateOrganizationSchema>;
+
+export const createWorkspaceSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  slug: slugSchema.optional(),
+});
+export type CreateWorkspaceInput = z.infer<typeof createWorkspaceSchema>;
+
+export const updateWorkspaceSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+});
+export type UpdateWorkspaceInput = z.infer<typeof updateWorkspaceSchema>;
+
+export const listWorkspacesQuerySchema = cursorPaginationSchema;
+export type ListWorkspacesQuery = z.infer<typeof listWorkspacesQuerySchema>;

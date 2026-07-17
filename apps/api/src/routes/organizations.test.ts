@@ -74,6 +74,50 @@ describe("organization routes", () => {
     expect(body.organizations.some((o: { id: string }) => o.id === organizationId)).toBe(true);
   });
 
+  it("returns organization details for a member", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: `/organizations/${organizationId}`,
+      cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.id).toBe(organizationId);
+    expect(body.role).toBe("OWNER");
+  });
+
+  it("returns 404 (not 403) for GET /organizations/:id from a non-member — cannot access another org's data", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: `/organizations/${organizationId}`,
+      cookies: { [SESSION_COOKIE_NAME]: outsiderCookie },
+    });
+    expect(response.statusCode).toBe(404);
+  });
+
+  it("lets an OWNER/ADMIN update the organization's name and plan via PATCH", async () => {
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/organizations/${organizationId}`,
+      cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      payload: { name: "Renamed Org", plan: "pro" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ name: "Renamed Org", plan: "pro" });
+  });
+
+  it("rejects PATCH /organizations/:id from a non-member — cannot access another org's data", async () => {
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/organizations/${organizationId}`,
+      cookies: { [SESSION_COOKIE_NAME]: outsiderCookie },
+      payload: { name: "Hijacked Name" },
+    });
+    expect(response.statusCode).toBe(404);
+  });
+
   it("returns 404 (not 403) for a non-member trying to view org members", async () => {
     const response = await app.inject({
       method: "GET",
@@ -241,6 +285,16 @@ describe("organization routes", () => {
       url: `/organizations/${organizationId}/members/${memberUserId}`,
       cookies: { [SESSION_COOKIE_NAME]: memberCookie },
       payload: { role: "ADMIN" },
+    });
+    expect(response.statusCode).toBe(403);
+  });
+
+  it("forbids a plain MEMBER from updating the organization via PATCH — requires OWNER/ADMIN", async () => {
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/organizations/${organizationId}`,
+      cookies: { [SESSION_COOKIE_NAME]: memberCookie },
+      payload: { name: "Member Should Not Be Able To Do This" },
     });
     expect(response.statusCode).toBe(403);
   });

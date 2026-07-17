@@ -6,6 +6,7 @@ import {
   inviteMemberSchema,
   listMembersQuerySchema,
   parseOrThrow,
+  updateOrganizationSchema,
 } from "@raas/shared";
 import { prisma, setTenantContext, withTenantTransaction, withUserContext } from "@raas/db";
 import type { OrgRole } from "@raas/db";
@@ -116,6 +117,46 @@ export async function organizationRoutes(app: FastifyInstance): Promise<void> {
       organizations: memberships.map((m) => ({ ...m.organization, role: m.role })),
     });
   });
+
+  app.get(
+    "/organizations/:id",
+    { preHandler: [requireAuth, requireOrgMembership] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+
+      // Organization itself carries no organizationId to scope a
+      // withTenantTransaction/RLS check by (it IS the tenant boundary —
+      // see schema.prisma's comment on the model); requireOrgMembership
+      // having already confirmed real membership is what makes a plain
+      // lookup here safe, same as every other :id route nested under
+      // /organizations.
+      const organization = await prisma.organization.findUnique({ where: { id } });
+      if (!organization) {
+        throw ApiError.notFound("Organization not found");
+      }
+
+      reply.send({ ...organization, role: request.membership!.role });
+    },
+  );
+
+  app.patch(
+    "/organizations/:id",
+    { preHandler: [requireAuth, requireOrgMembership, requireRole("ADMIN")] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const input = parseOrThrow(updateOrganizationSchema, request.body);
+
+      const organization = await prisma.organization.update({
+        where: { id },
+        data: {
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.plan !== undefined ? { plan: input.plan } : {}),
+        },
+      });
+
+      reply.send({ ...organization, role: request.membership!.role });
+    },
+  );
 
   app.get(
     "/organizations/:id/members",
