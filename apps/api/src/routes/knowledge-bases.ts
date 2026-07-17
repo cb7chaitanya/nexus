@@ -11,6 +11,7 @@ import type { FastifyInstance } from "fastify";
 
 import { requireMembership } from "../lib/membership.js";
 import { paginate } from "../lib/pagination.js";
+import { checkIngestionRateLimit } from "../lib/rate-limit.js";
 import { buildStorageKey, createPresignedUploadUrl } from "../lib/storage.js";
 import { requireAuth } from "../plugins/auth-guard.js";
 
@@ -23,6 +24,7 @@ export async function knowledgeBaseRoutes(app: FastifyInstance): Promise<void> {
     // Any member may create a KB — MVP access is org-level, not role-gated
     // (see architecture.md's "Document permissions" section).
     await requireMembership(input.organizationId, userId);
+    await checkIngestionRateLimit(input.organizationId, reply);
 
     const knowledgeBase = await withTenantTransaction(input.organizationId, (tx) =>
       tx.knowledgeBase.create({
@@ -92,6 +94,7 @@ export async function knowledgeBaseRoutes(app: FastifyInstance): Promise<void> {
     if (!userId) throw ApiError.unauthorized();
 
     await requireMembership(input.organizationId, userId);
+    await checkIngestionRateLimit(input.organizationId, reply);
 
     // Confirming the KB exists AND belongs to this org, then creating the
     // PENDING_UPLOAD Document row, happen in the same tenant-scoped

@@ -190,4 +190,157 @@ describe("document routes", () => {
 
     expect(response.statusCode).toBe(401);
   });
+
+  describe("daily document processing quota", () => {
+    // Same Redis key the production checkDocumentQuota (apps/api/src/lib/
+    // rate-limit.ts) writes to, via @raas/usage's checkAndConsumeDailyBudget
+    // -> the "documents" dimension -> packages/rate-limit's "ratelimit:"
+    // prefix. Pre-seeding it directly (rather than making
+    // RATE_LIMIT_DOCUMENT_QUOTA_DAILY_DEFAULT real presign+upload+complete
+    // round trips) is what keeps this test fast — the counting primitive
+    // itself is already verified against real Redis in
+    // packages/usage/src/budget-guard.test.ts; this test only checks that
+    // the route is actually wired to it and responds with the standard
+    // 429 envelope.
+    function quotaKey(orgId: string): string {
+      return `ratelimit:usage:org:${orgId}:documents:daily`;
+    }
+
+    it("returns 429 with the rate-limit envelope once the org's daily document quota is exhausted", async () => {
+      const org = await signup(app, `doc-quota-${suffix}@example.com`, password, `Doc Quota Org ${suffix}`);
+      const kbResponse = await app.inject({
+        method: "POST",
+        url: "/kb",
+        cookies: { [SESSION_COOKIE_NAME]: org.sessionCookie },
+        payload: {
+          organizationId: org.organizationId,
+          name: "Quota KB",
+          embeddingProvider: "openai",
+          embeddingModel: "text-embedding-3-small",
+          embeddingDim: PLATFORM_EMBEDDING_DIM,
+        },
+      });
+      const kbId = kbResponse.json().id;
+
+      // RATE_LIMIT_DOCUMENT_QUOTA_DAILY_DEFAULT defaults to 200 — pre-seed
+      // the counter to exactly that so the very next completion request
+      // is the one that crosses it.
+      await redis.set(quotaKey(org.organizationId), 200, "EX", 86_400);
+
+      const { documentId, uploadUrl } = await presignDocument(app, org.sessionCookie, org.organizationId, kbId);
+      await fetch(uploadUrl, { method: "PUT", headers: { "Content-Type": "text/plain" }, body: "quota probe" });
+
+      const response = await app.inject({
+        method: "POST",
+        url: `/documents/${documentId}/complete`,
+        cookies: { [SESSION_COOKIE_NAME]: org.sessionCookie },
+        payload: { organizationId: org.organizationId },
+      });
+
+      expect(response.statusCode).toBe(429);
+      expect(response.json()).toMatchObject({ error: { code: "RATE_LIMIT_EXCEEDED" } });
+
+      // The document must NOT have been transitioned to QUEUED (and
+      // therefore never enqueued) once the quota rejected the request.
+      const stored = await withTenantTransaction(org.organizationId, (tx) => tx.document.findUnique({ where: { id: documentId } }));
+      expect(stored?.status).toBe("PENDING_UPLOAD");
+    });
+
+    it("keeps daily document quotas fully isolated between organizations", async () => {
+      const orgA = await signup(app, `doc-quota-a-${suffix}@example.com`, password, `Doc Quota Org A ${suffix}`);
+      const orgB = await signup(app, `doc-quota-b-${suffix}@example.com`, password, `Doc Quota Org B ${suffix}`);
+      const kbAResponse = await app.inject({
+        method: "POST",
+        url: "/kb",
+        cookies: { [SESSION_COOKIE_NAME]: orgA.sessionCookie },
+        payload: {
+          organizationId: orgA.organizationId,
+          name: "Quota KB A",
+          embeddingProvider: "openai",
+          embeddingModel: "text-embedding-3-small",
+          embeddingDim: PLATFORM_EMBEDDING_DIM,
+        },
+      });
+      const kbBResponse = await app.inject({
+        method: "POST",
+        url: "/kb",
+        cookies: { [SESSION_COOKIE_NAME]: orgB.sessionCookie },
+        payload: {
+          organizationId: orgB.organizationId,
+          name: "Quota KB B",
+          embeddingProvider: "openai",
+          embeddingModel: "text-embedding-3-small",
+          embeddingDim: PLATFORM_EMBEDDING_DIM,
+        },
+      });
+
+      await redis.set(quotaKey(orgA.organizationId), 200, "EX", 86_400);
+
+      const { documentId: docA, uploadUrl: uploadUrlA } = await presignDocument(app, orgA.sessionCookie, orgA.organizationId, kbAResponse.json().id);
+      await fetch(uploadUrlA, { method: "PUT", headers: { "Content-Type": "text/plain" }, body: "org a" });
+      const responseA = await app.inject({
+        method: "POST",
+        url: `/documents/${docA}/complete`,
+        cookies: { [SESSION_COOKIE_NAME]: orgA.sessionCookie },
+        payload: { organizationId: orgA.organizationId },
+      });
+      expect(responseA.statusCode).toBe(429);
+
+      // Org A's exhausted quota must not affect Org B's own counter.
+      const { documentId: docB, uploadUrl: uploadUrlB } = await presignDocument(app, orgB.sessionCookie, orgB.organizationId, kbBResponse.json().id);
+      await fetch(uploadUrlB, { method: "PUT", headers: { "Content-Type": "text/plain" }, body: "org b" });
+      const responseB = await app.inject({
+        method: "POST",
+        url: `/documents/${docB}/complete`,
+        cookies: { [SESSION_COOKIE_NAME]: orgB.sessionCookie },
+        payload: { organizationId: orgB.organizationId },
+      });
+      expect(responseB.statusCode).toBe(200);
+    });
+
+    it("resets once the daily window rolls over", async () => {
+      const org = await signup(app, `doc-quota-reset-${suffix}@example.com`, password, `Doc Quota Reset Org ${suffix}`);
+      const kbResponse = await app.inject({
+        method: "POST",
+        url: "/kb",
+        cookies: { [SESSION_COOKIE_NAME]: org.sessionCookie },
+        payload: {
+          organizationId: org.organizationId,
+          name: "Quota Reset KB",
+          embeddingProvider: "openai",
+          embeddingModel: "text-embedding-3-small",
+          embeddingDim: PLATFORM_EMBEDDING_DIM,
+        },
+      });
+      const kbId = kbResponse.json().id;
+
+      await redis.set(quotaKey(org.organizationId), 200, "EX", 86_400);
+
+      const first = await presignDocument(app, org.sessionCookie, org.organizationId, kbId);
+      await fetch(first.uploadUrl, { method: "PUT", headers: { "Content-Type": "text/plain" }, body: "before reset" });
+      const blocked = await app.inject({
+        method: "POST",
+        url: `/documents/${first.documentId}/complete`,
+        cookies: { [SESSION_COOKIE_NAME]: org.sessionCookie },
+        payload: { organizationId: org.organizationId },
+      });
+      expect(blocked.statusCode).toBe(429);
+
+      // The fixed window "resets" by the key's TTL expiring — deleting it
+      // directly simulates that rollover without waiting out a real 24h
+      // window (the TTL/expiry mechanics themselves are already verified
+      // against real Redis in packages/rate-limit/src/rate-limiter.test.ts).
+      await redis.del(quotaKey(org.organizationId));
+
+      const second = await presignDocument(app, org.sessionCookie, org.organizationId, kbId);
+      await fetch(second.uploadUrl, { method: "PUT", headers: { "Content-Type": "text/plain" }, body: "after reset" });
+      const allowed = await app.inject({
+        method: "POST",
+        url: `/documents/${second.documentId}/complete`,
+        cookies: { [SESSION_COOKIE_NAME]: org.sessionCookie },
+        payload: { organizationId: org.organizationId },
+      });
+      expect(allowed.statusCode).toBe(200);
+    });
+  });
 });

@@ -1,11 +1,12 @@
 import { createRateLimiter } from "@raas/rate-limit";
 import { ApiError } from "@raas/shared";
+import { checkAndConsumeDailyBudget, checkDailyBudget, getOrganizationDailyLimit, recordDailyBudgetUsage } from "@raas/usage";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { env } from "../env.js";
 import { redis } from "./redis.js";
 
-const rateLimiter = createRateLimiter(redis);
+export const rateLimiter = createRateLimiter(redis);
 
 // Writes directly to the underlying Node response (reply.raw) rather
 // than through Fastify's reply.header() — chat.ts's SSE path later calls
@@ -91,13 +92,17 @@ export async function checkChatRateLimit(check: ChatRateLimitCheck, reply: Fasti
  * unavoidably let through, since nobody knew its cost yet. An honest
  * limitation of metering something you can't measure until after the
  * fact, not a bug.
+ *
+ * The org's ceiling comes from its OrganizationUsageLimit row when one
+ * exists, falling back to RATE_LIMIT_CHAT_TOKEN_BUDGET_DAILY otherwise —
+ * this is the "chat provider" half of the cost-protection guard (see
+ * @raas/usage's embedding-guard.ts for the embedding half); the check
+ * itself is @raas/usage's shared checkDailyBudget primitive, the same one
+ * the embedding guard uses, not a bespoke reimplementation.
  */
 export async function checkChatTokenBudget(organizationId: string, reply: FastifyReply): Promise<void> {
-  const result = await rateLimiter.peekLimit({
-    identifier: `chat:org:${organizationId}:tokens:daily`,
-    limit: env.RATE_LIMIT_CHAT_TOKEN_BUDGET_DAILY,
-    window: 86_400,
-  });
+  const limit = await getOrganizationDailyLimit(organizationId, "maxChatTokensPerDay", env.RATE_LIMIT_CHAT_TOKEN_BUDGET_DAILY);
+  const result = await checkDailyBudget({ rateLimiter, organizationId, dimension: "chat-tokens", limit });
   applyHeaders(reply, result);
   if (!result.allowed) {
     throw ApiError.rateLimited("This organization has exceeded its daily token budget");
@@ -111,11 +116,47 @@ export async function checkChatTokenBudget(organizationId: string, reply: Fastif
  * whether the NEXT request's checkChatTokenBudget call is blocked.
  */
 export async function recordChatTokenUsage(organizationId: string, totalTokens: number): Promise<void> {
-  if (totalTokens <= 0) return;
-  await rateLimiter.checkLimit({
-    identifier: `chat:org:${organizationId}:tokens:daily`,
-    limit: env.RATE_LIMIT_CHAT_TOKEN_BUDGET_DAILY,
-    window: 86_400,
-    amount: totalTokens,
+  await recordDailyBudgetUsage({ rateLimiter, organizationId, dimension: "chat-tokens", amount: totalTokens });
+}
+
+/**
+ * Org-scoped RPM for the ingestion path (POST /kb, POST
+ * /kb/:id/documents/presign, POST /documents/:id/complete) — the same
+ * shape as checkChatRateLimit's org dimension, just without a per-user
+ * dimension (the ticket that added this only asked for org-scoped
+ * limits on these routes). No per-API-key dimension for the same reason
+ * checkChatRateLimit has none: there is no API-key auth path yet.
+ */
+export async function checkIngestionRateLimit(organizationId: string, reply: FastifyReply): Promise<void> {
+  const result = await rateLimiter.checkLimit({
+    identifier: `ingestion:org:${organizationId}:rpm`,
+    limit: env.RATE_LIMIT_INGESTION_ORG_RPM,
+    window: 60,
   });
+  applyHeaders(reply, result);
+  if (!result.allowed) {
+    throw ApiError.rateLimited("This organization has exceeded its ingestion request rate limit");
+  }
+}
+
+/**
+ * Daily ceiling on documents actually queued for processing — checked at
+ * POST /documents/:id/complete (the point where the pipeline, and its
+ * real OpenAI embedding cost, is actually triggered), not at presign
+ * (which only creates a PENDING_UPLOAD row and costs nothing). Unlike the
+ * chat token budget, a document's cost to this counter is always exactly
+ * 1 and known up front, so this consumes immediately via
+ * checkAndConsumeDailyBudget rather than peeking then recording later.
+ */
+export async function checkDocumentQuota(organizationId: string, reply: FastifyReply): Promise<void> {
+  const limit = await getOrganizationDailyLimit(organizationId, "maxDocumentsPerDay", env.RATE_LIMIT_DOCUMENT_QUOTA_DAILY_DEFAULT);
+  const result = await checkAndConsumeDailyBudget({
+    rateLimiter,
+    organizationId,
+    dimension: "documents",
+    limit,
+    amount: 1,
+    rejectionMessage: "This organization has exceeded its daily document processing quota",
+  });
+  applyHeaders(reply, result);
 }

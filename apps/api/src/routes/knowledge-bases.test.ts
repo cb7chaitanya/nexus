@@ -329,4 +329,71 @@ describe("knowledge base routes", () => {
       expect(response.statusCode).toBe(404);
     });
   });
+
+  describe("ingestion rate limiting on POST /kb", () => {
+    it("returns 429 with the rate-limit envelope and headers once the org's ingestion RPM limit is exceeded", async () => {
+      const limited = await signup(app, `kb-ratelimit-${suffix}@example.com`, password, `KB Rate Limit Org ${suffix}`);
+
+      let lastResponse;
+      // RATE_LIMIT_INGESTION_ORG_RPM defaults to 20 — the 21st request in
+      // this dedicated org's own 60s window must be denied.
+      for (let i = 0; i < 21; i++) {
+        lastResponse = await app.inject({
+          method: "POST",
+          url: "/kb",
+          cookies: { [SESSION_COOKIE_NAME]: limited.sessionCookie },
+          payload: {
+            organizationId: limited.organizationId,
+            name: `Rate Limit Probe ${i}`,
+            embeddingProvider: "openai",
+            embeddingModel: "text-embedding-3-small",
+            embeddingDim: PLATFORM_EMBEDDING_DIM,
+          },
+        });
+      }
+
+      expect(lastResponse!.statusCode).toBe(429);
+      expect(lastResponse!.json()).toMatchObject({ error: { code: "RATE_LIMIT_EXCEEDED" } });
+      expect(lastResponse!.headers["x-ratelimit-limit"]).toBeDefined();
+      expect(lastResponse!.headers["x-ratelimit-remaining"]).toBe("0");
+      expect(Number(lastResponse!.headers["retry-after"])).toBeGreaterThan(0);
+    });
+
+    it("keeps ingestion rate limits fully isolated between organizations", async () => {
+      const orgA = await signup(app, `kb-ratelimit-a-${suffix}@example.com`, password, `KB Rate Limit Org A ${suffix}`);
+      const orgB = await signup(app, `kb-ratelimit-b-${suffix}@example.com`, password, `KB Rate Limit Org B ${suffix}`);
+
+      let lastResponseA;
+      for (let i = 0; i < 21; i++) {
+        lastResponseA = await app.inject({
+          method: "POST",
+          url: "/kb",
+          cookies: { [SESSION_COOKIE_NAME]: orgA.sessionCookie },
+          payload: {
+            organizationId: orgA.organizationId,
+            name: `Org A Probe ${i}`,
+            embeddingProvider: "openai",
+            embeddingModel: "text-embedding-3-small",
+            embeddingDim: PLATFORM_EMBEDDING_DIM,
+          },
+        });
+      }
+      expect(lastResponseA!.statusCode).toBe(429);
+
+      // Org A's exhausted limit must not affect Org B's own counter.
+      const responseB = await app.inject({
+        method: "POST",
+        url: "/kb",
+        cookies: { [SESSION_COOKIE_NAME]: orgB.sessionCookie },
+        payload: {
+          organizationId: orgB.organizationId,
+          name: "Org B First Request",
+          embeddingProvider: "openai",
+          embeddingModel: "text-embedding-3-small",
+          embeddingDim: PLATFORM_EMBEDDING_DIM,
+        },
+      });
+      expect(responseB.statusCode).toBe(201);
+    });
+  });
 });

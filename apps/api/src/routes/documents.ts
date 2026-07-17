@@ -4,6 +4,7 @@ import type { FastifyInstance } from "fastify";
 
 import { enqueueDocumentIngestion } from "../lib/ingestion-flow.js";
 import { requireMembership } from "../lib/membership.js";
+import { checkDocumentQuota, checkIngestionRateLimit } from "../lib/rate-limit.js";
 import { objectExists } from "../lib/storage.js";
 import { requireAuth } from "../plugins/auth-guard.js";
 
@@ -15,6 +16,13 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
     if (!userId) throw ApiError.unauthorized();
 
     await requireMembership(input.organizationId, userId);
+    await checkIngestionRateLimit(input.organizationId, reply);
+    // Daily ceiling on documents actually queued for processing — checked
+    // here (not at presign) since this is the point where the pipeline,
+    // and its real OpenAI embedding cost, actually gets triggered. Placed
+    // before the S3 existence check and status transition below so an
+    // over-quota org gets a fast 429 without the wasted I/O.
+    await checkDocumentQuota(input.organizationId, reply);
 
     // Ownership: the document is looked up scoped to this org's tenant
     // context, so a documentId belonging to another org is indistinguishable

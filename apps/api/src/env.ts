@@ -61,6 +61,16 @@ export const env = {
   // everywhere else in this schema (UsageEvent.organizationId is the
   // primary dimension; userId is auxiliary).
   RATE_LIMIT_CHAT_TOKEN_BUDGET_DAILY: Number(process.env.RATE_LIMIT_CHAT_TOKEN_BUDGET_DAILY ?? 200_000),
+  // Ingestion path (POST /kb, POST /kb/:id/documents/presign, POST
+  // /documents/:id/complete) — org-scoped RPM, same shape as chat's own
+  // org limit, guarding against burst abuse independent of the daily
+  // document/embedding-token ceilings below.
+  RATE_LIMIT_INGESTION_ORG_RPM: Number(process.env.RATE_LIMIT_INGESTION_ORG_RPM ?? 20),
+  // Platform-wide defaults for OrganizationUsageLimit's three ceilings,
+  // used whenever an org has no override row (see @raas/usage's
+  // getOrganizationDailyLimit) — most orgs run on these.
+  RATE_LIMIT_DOCUMENT_QUOTA_DAILY_DEFAULT: Number(process.env.RATE_LIMIT_DOCUMENT_QUOTA_DAILY_DEFAULT ?? 200),
+  RATE_LIMIT_EMBEDDING_TOKEN_BUDGET_DAILY_DEFAULT: Number(process.env.RATE_LIMIT_EMBEDDING_TOKEN_BUDGET_DAILY_DEFAULT ?? 2_000_000),
   // How many prior turns (user+assistant pairs) are loaded as
   // conversation history and replayed into the prompt.
   CHAT_HISTORY_MESSAGE_LIMIT: Number(process.env.CHAT_HISTORY_MESSAGE_LIMIT ?? 20),
