@@ -151,6 +151,9 @@ importers:
       '@raas/providers':
         specifier: workspace:*
         version: link:../../packages/providers
+      '@raas/rate-limit':
+        specifier: workspace:*
+        version: link:../../packages/rate-limit
       '@raas/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -343,6 +346,15 @@ importers:
       '@raas/db':
         specifier: workspace:*
         version: link:../db
+      '@raas/providers':
+        specifier: workspace:*
+        version: link:../providers
+      '@raas/rate-limit':
+        specifier: workspace:*
+        version: link:../rate-limit
+      '@raas/shared':
+        specifier: workspace:*
+        version: link:../shared
     devDependencies:
       '@raas/config':
         specifier: workspace:*
@@ -350,6 +362,9 @@ importers:
       dotenv-cli:
         specifier: ^7.4.2
         version: 7.4.4
+      ioredis:
+        specifier: ^5.4.1
+        version: 5.11.1
       typescript:
         specifier: ^5.5.4
         version: 5.9.3

@@ -7,7 +7,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 
 import { env } from "../env.js";
 import { findOrCreateConversation, loadConversationHistory } from "../lib/conversation.js";
-import { getEmbeddingProvider } from "../lib/embedding-provider.js";
+import { getBudgetGuardedEmbeddingProvider } from "../lib/embedding-provider.js";
 import { getLLMModelName, getLLMProvider } from "../lib/llm-provider.js";
 import { requireMembership } from "../lib/membership.js";
 import { checkChatRateLimit, checkChatTokenBudget, recordChatTokenUsage } from "../lib/rate-limit.js";
@@ -69,7 +69,11 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
 
       // Same model the KB's chunks were embedded with — retrieval never
       // lets the caller pick a different one (architecture.md §4.6).
-      const queryEmbedding = await embedQuery(getEmbeddingProvider(), input.message);
+      // Wrapped with the same daily embedding-token budget guard the
+      // ingestion pipeline uses (see @raas/usage's withEmbeddingBudgetGuard)
+      // — a query embedding is small, but it's still a real OpenAI call
+      // billed against the org's budget.
+      const queryEmbedding = await embedQuery(await getBudgetGuardedEmbeddingProvider(input.organizationId), input.message);
       const candidates = await searchSimilarChunks(tx, {
         organizationId: input.organizationId,
         knowledgeBaseId,

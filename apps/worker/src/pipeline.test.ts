@@ -223,4 +223,43 @@ describe("ingestion pipeline (extract-text -> chunk-text -> embed-chunks -> proc
     );
     expect(chunks).toHaveLength(0);
   });
+
+  it("fails fast (no retries) when the organization's daily embedding token budget is already exhausted", async () => {
+    // Same Redis key embed-chunks.ts's budget guard writes to (see
+    // @raas/usage's withEmbeddingBudgetGuard -> checkAndConsumeDailyBudget
+    // -> "embedding-tokens" dimension -> packages/rate-limit's
+    // "ratelimit:" prefix). Pre-seeding it directly at the configured
+    // default ceiling is what lets this test trigger the rejection on the
+    // very first embed-chunks job, rather than needing a real document
+    // large enough to exceed RATE_LIMIT_EMBEDDING_TOKEN_BUDGET_DAILY_DEFAULT
+    // (2,000,000 tokens) on its own.
+    await redisConnection.set(`ratelimit:usage:org:${organizationId}:embedding-tokens:daily`, env.RATE_LIMIT_EMBEDDING_TOKEN_BUDGET_DAILY_DEFAULT, "EX", 86_400);
+
+    const pdf = buildTestPdf([Array.from({ length: 150 }, (_, i) => `budgetword${i}`).join(" ")]);
+    const document = await createDocument(pdf, "budget-exhausted.pdf");
+
+    await enqueueFlow(flowProducer, { documentId: document.id, organizationId, knowledgeBaseId });
+
+    // waitForDocumentStatus's own 15s timeout is well under the ~35s a
+    // full 3-attempt exponential backoff retry cycle (5s + 10s + 20s)
+    // would take — reaching FAILED within it is itself proof the budget
+    // rejection was thrown as an UnrecoverableError (immediate terminal
+    // failure), not retried like a transient error.
+    const finalDocument = await waitForDocumentStatus(organizationId, document.id, ["READY", "FAILED"]);
+    expect(finalDocument.status).toBe("FAILED");
+    expect(finalDocument.failureReason).toContain("exceeded its daily embedding token budget");
+
+    // Chunks were created by chunk-text.ts (upstream of embed-chunks.ts)
+    // before the budget rejection — they're expected to exist, just
+    // permanently unembedded (embedding stays null), not a duplicate or
+    // corrupted set. embedding is Prisma's Unsupported("vector(n)") type,
+    // so it's checked via $queryRaw, same as the happy-path test above.
+    const chunks = await withTenantTransaction(organizationId, (tx) =>
+      tx.$queryRaw<Array<{ id: string; has_embedding: boolean }>>`
+        SELECT id, embedding IS NOT NULL as has_embedding FROM "DocumentChunk" WHERE "documentId" = ${document.id}
+      `,
+    );
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(chunks.every((c) => !c.has_embedding)).toBe(true);
+  });
 });

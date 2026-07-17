@@ -24,6 +24,11 @@ export const env = {
   EMBEDDING_PROVIDER: (process.env.EMBEDDING_PROVIDER ?? "openai") as "openai" | "fake",
   OPENAI_API_KEY: process.env.EMBEDDING_PROVIDER === "fake" ? (process.env.OPENAI_API_KEY ?? "") : requireEnv("OPENAI_API_KEY"),
   OPENAI_EMBEDDING_BATCH_SIZE: Number(process.env.OPENAI_EMBEDDING_BATCH_SIZE ?? 100),
+  // Platform-wide default for OrganizationUsageLimit.maxEmbeddingTokensPerDay,
+  // used whenever an org has no override row (see @raas/usage's
+  // getOrganizationDailyLimit). Same env var name as apps/api's own copy
+  // of this default — set once per deployment, read by both processes.
+  RATE_LIMIT_EMBEDDING_TOKEN_BUDGET_DAILY_DEFAULT: Number(process.env.RATE_LIMIT_EMBEDDING_TOKEN_BUDGET_DAILY_DEFAULT ?? 2_000_000),
   // Only meaningful with EMBEDDING_PROVIDER=fake — lets the chaos test
   // (and manual testing) control embedding latency deterministically
   // instead of racing a real network call.

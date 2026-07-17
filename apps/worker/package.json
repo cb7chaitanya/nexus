@@ -18,6 +18,7 @@
     "@raas/db": "workspace:*",
     "@raas/logger": "workspace:*",
     "@raas/providers": "workspace:*",
+    "@raas/rate-limit": "workspace:*",
     "@raas/shared": "workspace:*",
     "@raas/usage": "workspace:*",
     "bullmq": "^5.80.5",

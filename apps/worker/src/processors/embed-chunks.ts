@@ -1,8 +1,9 @@
 import { withTenantTransaction } from "@raas/db";
+import { ApiError } from "@raas/shared";
 import { recordUsage } from "@raas/usage";
 import { UnrecoverableError, type Job } from "bullmq";
 
-import { getEmbeddingModelName, getEmbeddingProvider } from "../lib/embedding-provider.js";
+import { getBudgetGuardedEmbeddingProvider, getEmbeddingModelName } from "../lib/embedding-provider.js";
 import { failDocument, isLastAttempt } from "../lib/job-failure.js";
 import type { EmbedChunksJobData } from "./types.js";
 
@@ -45,7 +46,7 @@ export async function embedChunksProcessor(job: Job<EmbedChunksJobData>): Promis
       return chunk;
     });
 
-    const provider = getEmbeddingProvider();
+    const provider = await getBudgetGuardedEmbeddingProvider(organizationId);
     const vectors = await provider.embed(orderedChunks.map((c) => c.content));
 
     await withTenantTransaction(organizationId, async (tx) => {
@@ -70,6 +71,15 @@ export async function embedChunksProcessor(job: Job<EmbedChunksJobData>): Promis
 
     return { embedded: orderedChunks.length };
   } catch (err) {
+    // A daily embedding-token budget won't reset within the retry
+    // backoff window (5s/10s/20s — see queue/queues.ts's exponential
+    // backoff), so retrying immediately is pointless: fail the document
+    // now, the same way an UnrecoverableError does, instead of burning
+    // the full retry budget on something retrying can't fix.
+    if (err instanceof ApiError && err.code === "RATE_LIMIT_EXCEEDED") {
+      await failDocument(organizationId, documentId, err.message);
+      throw new UnrecoverableError(err.message);
+    }
     if (err instanceof UnrecoverableError) {
       await failDocument(organizationId, documentId, err.message);
       throw err;
