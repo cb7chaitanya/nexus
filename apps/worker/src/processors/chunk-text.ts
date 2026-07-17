@@ -5,6 +5,7 @@ import { UnrecoverableError, type Job } from "bullmq";
 import { chunkPages } from "../lib/chunk-text.js";
 import type { ExtractedDocument } from "../lib/extract-pdf.js";
 import { failDocument, isLastAttempt } from "../lib/job-failure.js";
+import { createJobLogger } from "../lib/job-logger.js";
 import { DEFAULT_JOB_OPTS, documentEmbeddingQueue } from "../queue/queues.js";
 import type { DocumentJobData, EmbedChunksJobData } from "./types.js";
 
@@ -40,6 +41,7 @@ function batch<T>(items: T[], size: number): T[][] {
  */
 export async function chunkTextProcessor(job: Job<DocumentJobData>): Promise<{ chunkCount: number }> {
   const { organizationId, documentId, knowledgeBaseId } = job.data;
+  const log = createJobLogger({ jobId: job.id, organizationId, documentId });
 
   try {
     if (!job.parent) {
@@ -98,15 +100,19 @@ export async function chunkTextProcessor(job: Job<DocumentJobData>): Promise<{ c
       });
     }
 
+    // Chunk count only — never chunk content.
+    log.info({ chunkCount: chunks.length, batchCount: batches.length }, "document chunked");
     return { chunkCount: chunks.length };
   } catch (err) {
     if (err instanceof UnrecoverableError) {
       await failDocument(organizationId, documentId, err.message);
+      log.warn({ err }, "chunk-text failed: unrecoverable");
       throw err;
     }
     if (isLastAttempt(job)) {
       await failDocument(organizationId, documentId, err instanceof Error ? err.message : String(err));
     }
+    log.error({ err }, "chunk-text failed");
     throw err;
   }
 }

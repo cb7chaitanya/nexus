@@ -3,6 +3,7 @@ import { UnrecoverableError, type Job } from "bullmq";
 
 import { extractPdfText, ScannedDocumentError, type ExtractedDocument } from "../lib/extract-pdf.js";
 import { failDocument, isLastAttempt } from "../lib/job-failure.js";
+import { createJobLogger } from "../lib/job-logger.js";
 import { downloadObject } from "../lib/storage.js";
 import type { DocumentJobData } from "./types.js";
 
@@ -14,6 +15,7 @@ import type { DocumentJobData } from "./types.js";
  */
 export async function extractTextProcessor(job: Job<DocumentJobData>): Promise<ExtractedDocument> {
   const { organizationId, documentId } = job.data;
+  const log = createJobLogger({ jobId: job.id, organizationId, documentId });
 
   try {
     const document = await withTenantTransaction(organizationId, async (tx) => {
@@ -34,19 +36,25 @@ export async function extractTextProcessor(job: Job<DocumentJobData>): Promise<E
     }
 
     const buffer = await downloadObject(document.storageKey);
-    return await extractPdfText(buffer);
+    // Page/character counts only — never the extracted text itself.
+    const extracted = await extractPdfText(buffer);
+    log.info({ pageCount: extracted.pages.length }, "text extracted");
+    return extracted;
   } catch (err) {
     if (err instanceof ScannedDocumentError) {
       await failDocument(organizationId, documentId, err.message);
+      log.warn({ err }, "extract-text failed: scanned document");
       throw new UnrecoverableError(err.message);
     }
     if (err instanceof UnrecoverableError) {
       await failDocument(organizationId, documentId, err.message);
+      log.warn({ err }, "extract-text failed: unrecoverable");
       throw err;
     }
     if (isLastAttempt(job)) {
       await failDocument(organizationId, documentId, err instanceof Error ? err.message : String(err));
     }
+    log.error({ err }, "extract-text failed");
     throw err;
   }
 }

@@ -5,6 +5,7 @@ import { UnrecoverableError, type Job } from "bullmq";
 
 import { getBudgetGuardedEmbeddingProvider, getEmbeddingModelName } from "../lib/embedding-provider.js";
 import { failDocument, isLastAttempt } from "../lib/job-failure.js";
+import { createJobLogger } from "../lib/job-logger.js";
 import type { EmbedChunksJobData } from "./types.js";
 
 // Same chars-per-token approximation used by chunk-text.ts's own budget
@@ -32,6 +33,7 @@ const CHARS_PER_TOKEN = 4;
  */
 export async function embedChunksProcessor(job: Job<EmbedChunksJobData>): Promise<{ embedded: number }> {
   const { organizationId, documentId, chunkIds } = job.data;
+  const log = createJobLogger({ jobId: job.id, organizationId, documentId });
 
   try {
     const chunks = await withTenantTransaction(organizationId, (tx) =>
@@ -69,6 +71,9 @@ export async function embedChunksProcessor(job: Job<EmbedChunksJobData>): Promis
       );
     });
 
+    // Embedded chunk count only — never chunk content or the vectors
+    // themselves.
+    log.info({ embedded: orderedChunks.length }, "batch embedded");
     return { embedded: orderedChunks.length };
   } catch (err) {
     // A daily embedding-token budget won't reset within the retry
@@ -78,15 +83,18 @@ export async function embedChunksProcessor(job: Job<EmbedChunksJobData>): Promis
     // the full retry budget on something retrying can't fix.
     if (err instanceof ApiError && err.code === "RATE_LIMIT_EXCEEDED") {
       await failDocument(organizationId, documentId, err.message);
+      log.warn({ err }, "embed-chunks failed: daily budget exceeded");
       throw new UnrecoverableError(err.message);
     }
     if (err instanceof UnrecoverableError) {
       await failDocument(organizationId, documentId, err.message);
+      log.warn({ err }, "embed-chunks failed: unrecoverable");
       throw err;
     }
     if (isLastAttempt(job)) {
       await failDocument(organizationId, documentId, err instanceof Error ? err.message : String(err));
     }
+    log.error({ err }, "embed-chunks failed");
     throw err;
   }
 }

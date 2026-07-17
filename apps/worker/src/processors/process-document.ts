@@ -3,6 +3,7 @@ import { recordUsage } from "@raas/usage";
 import type { Job } from "bullmq";
 
 import { failDocument, isLastAttempt } from "../lib/job-failure.js";
+import { createJobLogger } from "../lib/job-logger.js";
 import type { DocumentJobData } from "./types.js";
 
 /**
@@ -16,6 +17,7 @@ import type { DocumentJobData } from "./types.js";
  */
 export async function processDocumentProcessor(job: Job<DocumentJobData>): Promise<void> {
   const { organizationId, documentId, knowledgeBaseId } = job.data;
+  const log = createJobLogger({ jobId: job.id, organizationId, documentId });
 
   try {
     await withTenantTransaction(organizationId, async (tx) => {
@@ -25,10 +27,12 @@ export async function processDocumentProcessor(job: Job<DocumentJobData>): Promi
       });
       await recordUsage({ organizationId, type: "DOCUMENT_PROCESSED", metadata: { documentId, knowledgeBaseId } }, tx);
     });
+    log.info("document marked READY");
   } catch (err) {
     if (isLastAttempt(job)) {
       await failDocument(organizationId, documentId, err instanceof Error ? err.message : String(err));
     }
+    log.error({ err }, "process-document failed");
     throw err;
   }
 }

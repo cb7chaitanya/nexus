@@ -1,12 +1,10 @@
-import { createLogger } from "@raas/logger";
 import { prisma, withTenantTransaction } from "@raas/db";
 import { JOB_NAMES, QUEUE_NAMES } from "@raas/shared";
-import { FlowProducer } from "bullmq";
+import { FlowProducer, type Job } from "bullmq";
 
 import { env } from "../env.js";
+import { createJobLogger } from "../lib/job-logger.js";
 import { redisConnection } from "../lib/redis.js";
-
-const logger = createLogger({ service: "worker" });
 
 const flowProducer = new FlowProducer({ connection: redisConnection });
 
@@ -94,14 +92,24 @@ function failureReason(thresholdMs: number): string {
  * production flexibility beyond the env vars themselves, but so tests
  * can exercise the auto-retry path and a tight threshold without
  * reloading the env-derived module singleton.
+ *
+ * `job` is optional so every existing direct caller (tests calling this
+ * function outside of BullMQ entirely) keeps working unchanged — the real
+ * worker registration (index.ts) passes the actual BullMQ Job so its id
+ * can be bound onto every log line this sweep pass produces, the same
+ * jobId/organizationId/documentId shape every other processor uses (see
+ * lib/job-logger.ts). One sweep job spans many organizations/documents,
+ * so jobId is bound once up front and organizationId/documentId are
+ * added per document inside the loop.
  */
 export async function sweepStuckDocuments(
-  options: { thresholdMs?: number; autoRetry?: boolean } = {},
+  options: { thresholdMs?: number; autoRetry?: boolean; job?: Job } = {},
 ): Promise<SweepResult> {
   const thresholdMs = options.thresholdMs ?? env.STUCK_DOCUMENT_THRESHOLD_MS;
   const autoRetry = options.autoRetry ?? env.STUCK_DOCUMENT_AUTO_RETRY;
   const threshold = new Date(Date.now() - thresholdMs);
   const result: SweepResult = { checked: 0, failed: 0, retried: 0 };
+  const jobLog = createJobLogger({ jobId: options.job?.id });
 
   // Organization carries no organizationId of its own and has no RLS
   // policy — reading ids off it is not a tenant-data read.
@@ -117,14 +125,13 @@ export async function sweepStuckDocuments(
 
     for (const document of stuck) {
       const reason = failureReason(thresholdMs);
+      const docLog = jobLog.child({ organizationId: org.id, documentId: document.id });
+
       await withTenantTransaction(org.id, (tx) =>
         tx.document.update({ where: { id: document.id }, data: { status: "FAILED", failureReason: reason } }),
       );
       result.failed++;
-      logger.error(
-        { documentId: document.id, organizationId: org.id, previousStatus: document.status, stuckSince: document.updatedAt, failureReason: reason },
-        "stuck document marked FAILED by sweep",
-      );
+      docLog.error({ previousStatus: document.status, stuckSince: document.updatedAt, failureReason: reason }, "stuck document marked FAILED by sweep");
 
       if (autoRetry) {
         await enqueueRetryFlow(document.id, org.id, document.knowledgeBaseId);
@@ -132,10 +139,11 @@ export async function sweepStuckDocuments(
           tx.document.update({ where: { id: document.id }, data: { status: "QUEUED", failureReason: null } }),
         );
         result.retried++;
-        logger.info({ documentId: document.id, organizationId: org.id }, "stuck document automatically re-enqueued for retry");
+        docLog.info("stuck document automatically re-enqueued for retry");
       }
     }
   }
 
+  jobLog.info({ ...result }, "stuck-document sweep pass complete");
   return result;
 }

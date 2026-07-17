@@ -3,6 +3,7 @@ import { createLogger } from "@raas/logger";
 import { Queue, Worker } from "bullmq";
 
 import { env } from "./env.js";
+import { createJobLogger } from "./lib/job-logger.js";
 import { redisConnection } from "./lib/redis.js";
 import { chunkTextProcessor } from "./processors/chunk-text.js";
 import { embedChunksProcessor } from "./processors/embed-chunks.js";
@@ -62,18 +63,28 @@ async function main(): Promise<void> {
       jobId: "sweep-stuck-documents-schedule",
     },
   );
-  const sweepWorker = new Worker(QUEUE_NAMES.sweep, () => sweepStuckDocuments(), {
+  const sweepWorker = new Worker(QUEUE_NAMES.sweep, (job) => sweepStuckDocuments({ job }), {
     ...sharedWorkerOptions,
     concurrency: 1,
   });
   sweepWorker.on("completed", (job) => {
-    logger.info({ jobId: job.id, result: job.returnvalue as unknown }, "stuck-document sweep completed");
+    createJobLogger({ jobId: job.id }).info({ result: job.returnvalue as unknown }, "stuck-document sweep completed");
   });
 
   const workers = [processingWorker, extractionWorker, embeddingWorker, sweepWorker];
   for (const worker of workers) {
     worker.on("failed", (job, err) => {
-      logger.error({ jobId: job?.id, jobName: job?.name, err }, "job failed");
+      // job.data's shape varies by queue (extraction/chunking/embedding
+      // jobs carry organizationId/documentId; sweep jobs carry neither,
+      // since one sweep job spans many documents — see
+      // sweep-stuck-documents.ts's own per-document logging for that
+      // case). Reading them off optionally here is what makes this one
+      // handler cover every queue consistently instead of one per queue.
+      const data = job?.data as { organizationId?: string; documentId?: string } | undefined;
+      createJobLogger({ jobId: job?.id, organizationId: data?.organizationId, documentId: data?.documentId }).error(
+        { jobName: job?.name, err },
+        "job failed",
+      );
     });
   }
 
