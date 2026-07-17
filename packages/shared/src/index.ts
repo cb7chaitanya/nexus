@@ -34,3 +34,5 @@ export { getConversationQuerySchema, listConversationsQuerySchema, listMessagesQ
 export type { GetConversationQuery, ListConversationsQuery, ListMessagesQuery } from "./schemas/conversations.js";
 export { cursorPaginationSchema } from "./schemas/pagination.js";
 export type { CursorPaginationQuery } from "./schemas/pagination.js";
+export { getUsageQuerySchema } from "./schemas/usage.js";
+export type { GetUsageQuery } from "./schemas/usage.js";

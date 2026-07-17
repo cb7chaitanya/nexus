@@ -14,6 +14,7 @@ import { conversationRoutes } from "./routes/conversations.js";
 import { documentRoutes } from "./routes/documents.js";
 import { knowledgeBaseRoutes } from "./routes/knowledge-bases.js";
 import { organizationRoutes } from "./routes/organizations.js";
+import { usageRoutes } from "./routes/usage.js";
 
 /**
  * Builds (but does not start listening on) a fully wired Fastify instance.
@@ -73,6 +74,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(documentRoutes);
   await app.register(chatRoutes);
   await app.register(conversationRoutes);
+  await app.register(usageRoutes);
 
   return app;
 }
