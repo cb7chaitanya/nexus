@@ -1,0 +1,191 @@
+name: raas-prod
+
+# Production compose stack. Every value that differs between environments
+# (secrets, hostnames, provider choice) comes from the environment/.env
+# file passed to `docker compose`, never hardcoded here — see
+# docs/deployment.md for the full list of required variables and how to
+# supply them.
+#
+# Deployment order is enforced via depends_on/condition below, not left to
+# operator discipline: postgres and redis must be healthy, then `migrate`
+# must run prisma migrate deploy to completion, before api or worker are
+# allowed to start. See requirement 4 / docs/deployment.md — there is no
+# manual migration step.
+#
+# Unlike docker-compose.yml (local dev), postgres/redis/object-storage
+# ports are NOT published to the host: only api and web are reachable from
+# outside the compose network. Put a reverse proxy / TLS terminator in
+# front of api and web for real internet-facing traffic — this file is
+# infrastructure for the application tier, not an edge/ingress layer.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}
+    volumes:
+      - raas_postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.prod.sh:/docker-entrypoint-initdb.d/init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # noeviction — see the identical comment in docker-compose.yml.
+    # requirepass: unlike local dev, this Redis instance also backs BullMQ
+    # job data and rate-limit counters for a real deployment, so it's
+    # password-protected on the compose network by default.
+    command: ["redis-server", "--maxmemory-policy", "noeviction", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"]
+    volumes:
+      - raas_redis_data:/data
+    healthcheck:
+      # Single-$ (not $${...}) deliberately — this needs the real password
+      # substituted at `docker compose` config time, since (unlike
+      # postgres's official image) redis:7-alpine's entrypoint doesn't
+      # export REDIS_PASSWORD as a container env var for a $$-escaped,
+      # runtime-shell-expanded form to read.
+      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD} ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  object-storage:
+    # Self-hosted, S3-compatible object storage — swap for a managed
+    # S3/R2 bucket in a real deployment by deleting this service and
+    # pointing S3_ENDPOINT/S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY at it
+    # instead; no application code change either way (see
+    # apps/api/src/lib/storage.ts).
+    image: minio/minio:latest
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is required}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY is required}
+    command: ["server", "/data", "--console-address", ":9001"]
+    volumes:
+      - raas_object_storage_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: applies any pending Prisma migrations, then exits. api and
+  # worker both wait on this completing successfully before they start —
+  # see the top-of-file comment. Reuses the api image (it already contains
+  # the Prisma CLI, schema, and migrations — see apps/api/Dockerfile)
+  # rather than maintaining a fourth image just for this.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+    entrypoint: ["/app/packages/db/node_modules/.bin/prisma"]
+    command: ["migrate", "deploy", "--schema=packages/db/prisma/schema.prisma"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-4000}:${API_PORT:-4000}"
+    environment:
+      NODE_ENV: production
+      API_PORT: ${API_PORT:-4000}
+      API_HOST: 0.0.0.0
+      WEB_ORIGIN: ${WEB_ORIGIN:?WEB_ORIGIN is required}
+      APP_DATABASE_URL: postgresql://raas_app:${POSTGRES_APP_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      SESSION_JWT_SECRET: ${SESSION_JWT_SECRET:?SESSION_JWT_SECRET is required}
+      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-604800}
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://object-storage:9000}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:?S3_BUCKET is required}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is required}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY is required}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4o-mini}
+      RATE_LIMIT_AUTH_MAX: ${RATE_LIMIT_AUTH_MAX:-10}
+      RATE_LIMIT_AUTH_WINDOW_SECONDS: ${RATE_LIMIT_AUTH_WINDOW_SECONDS:-60}
+      RATE_LIMIT_CHAT_ORG_RPM: ${RATE_LIMIT_CHAT_ORG_RPM:-30}
+      RATE_LIMIT_CHAT_USER_RPM: ${RATE_LIMIT_CHAT_USER_RPM:-20}
+      RATE_LIMIT_CHAT_TOKEN_BUDGET_DAILY: ${RATE_LIMIT_CHAT_TOKEN_BUDGET_DAILY:-200000}
+      RATE_LIMIT_INGESTION_ORG_RPM: ${RATE_LIMIT_INGESTION_ORG_RPM:-20}
+      RATE_LIMIT_DOCUMENT_QUOTA_DAILY_DEFAULT: ${RATE_LIMIT_DOCUMENT_QUOTA_DAILY_DEFAULT:-200}
+      RATE_LIMIT_EMBEDDING_TOKEN_BUDGET_DAILY_DEFAULT: ${RATE_LIMIT_EMBEDDING_TOKEN_BUDGET_DAILY_DEFAULT:-2000000}
+      CHAT_HISTORY_MESSAGE_LIMIT: ${CHAT_HISTORY_MESSAGE_LIMIT:-20}
+      KB_DELETION_ASYNC_CHUNK_THRESHOLD: ${KB_DELETION_ASYNC_CHUNK_THRESHOLD:-5000}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      object-storage:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      APP_DATABASE_URL: postgresql://raas_app:${POSTGRES_APP_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://object-storage:9000}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:?S3_BUCKET is required}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is required}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY is required}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_EMBEDDING_BATCH_SIZE: ${OPENAI_EMBEDDING_BATCH_SIZE:-100}
+      RATE_LIMIT_EMBEDDING_TOKEN_BUDGET_DAILY_DEFAULT: ${RATE_LIMIT_EMBEDDING_TOKEN_BUDGET_DAILY_DEFAULT:-2000000}
+      WORKER_LOCK_DURATION_MS: ${WORKER_LOCK_DURATION_MS:-30000}
+      WORKER_STALLED_INTERVAL_MS: ${WORKER_STALLED_INTERVAL_MS:-30000}
+      STUCK_DOCUMENT_THRESHOLD_MS: ${STUCK_DOCUMENT_THRESHOLD_MS:-1800000}
+      STUCK_DOCUMENT_SWEEP_INTERVAL_MS: ${STUCK_DOCUMENT_SWEEP_INTERVAL_MS:-300000}
+      STUCK_DOCUMENT_AUTO_RETRY: ${STUCK_DOCUMENT_AUTO_RETRY:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      object-storage:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+    depends_on:
+      - api
+
+volumes:
+  raas_postgres_data:
+  raas_redis_data:
+  raas_object_storage_data:
