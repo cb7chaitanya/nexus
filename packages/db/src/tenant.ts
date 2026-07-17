@@ -101,3 +101,27 @@ export async function withUserContext<T>(
     return callback(tx);
   });
 }
+
+/**
+ * Sets app.current_org_id for the remainder of an ALREADY-OPEN
+ * transaction, without opening a new one. withTenantTransaction can't be
+ * used for this: it always opens its own transaction, which doesn't work
+ * when the org itself is being created in the SAME transaction as its
+ * first RLS-scoped row (e.g. the owner's OrganizationMember) — the org
+ * doesn't exist yet before that transaction starts, so there's no id to
+ * hand withTenantTransaction up front.
+ *
+ * This is what makes signup and org creation genuinely atomic (see
+ * apps/api/src/routes/auth.ts and organizations.ts): create the
+ * Organization row, call this to set the RLS context using the id just
+ * created, then create the OrganizationMember row — all inside one
+ * prisma.$transaction, so a failure anywhere rolls back everything
+ * instead of leaving an orphaned org with no owner.
+ */
+export async function setTenantContext(tx: Prisma.TransactionClient, orgId: string): Promise<void> {
+  if (!UUID_RE.test(orgId)) {
+    throw new Error(`setTenantContext: orgId must be a UUID, got: ${JSON.stringify(orgId)}`);
+  }
+
+  await tx.$executeRaw`SELECT set_config('app.current_org_id', ${orgId}, true)`;
+}

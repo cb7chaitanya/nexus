@@ -1,5 +1,5 @@
 export { prisma } from "./client.js";
-export { withTenantTransaction, withUserContext } from "./tenant.js";
+export { setTenantContext, withTenantTransaction, withUserContext } from "./tenant.js";
 export { PrismaClient, Prisma } from "@prisma/client";
 export type {
   OrgRole,

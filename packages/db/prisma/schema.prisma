@@ -201,6 +201,12 @@ model Document {
   failureReason   String?
   uploadedById    String?
   createdAt       DateTime       @default(now())
+  // Needed for stuck-job recovery (apps/worker's sweep-stuck-documents):
+  // createdAt alone can't tell you how long a document has sat in its
+  // CURRENT status — a document that spent hours in PENDING_UPLOAD before
+  // recently becoming QUEUED shouldn't be flagged as stuck off its
+  // original createdAt. Auto-updated on every status transition.
+  updatedAt       DateTime       @updatedAt
   processedAt     DateTime?
 
   organization  Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)

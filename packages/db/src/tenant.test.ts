@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { prisma, withTenantTransaction, withUserContext } from "./index.js";
+import { prisma, setTenantContext, withTenantTransaction, withUserContext } from "./index.js";
 
 describe("tenant isolation (RLS)", () => {
   let orgA: { id: string };
@@ -490,5 +490,50 @@ describe("self membership lookup (withUserContext)", () => {
 
     expect(rows).toHaveLength(1);
     expect(rows[0]?.organizationId).toBe(orgA.id);
+  });
+});
+
+describe("setTenantContext", () => {
+  it("lets a caller create an Organization and its first RLS-scoped row atomically in one transaction", async () => {
+    const suffix = randomUUID().slice(0, 8);
+    let orgId!: string;
+
+    await prisma.$transaction(async (tx) => {
+      const org = await tx.organization.create({ data: { name: `Atomic Org ${suffix}`, slug: `atomic-org-${suffix}` } });
+      orgId = org.id;
+      const user = await tx.user.create({ data: { email: `atomic-${suffix}@example.com` } });
+
+      await setTenantContext(tx, org.id);
+      await tx.organizationMember.create({ data: { organizationId: org.id, userId: user.id, role: "OWNER" } });
+    });
+
+    const members = await withTenantTransaction(orgId, (tx) => tx.organizationMember.findMany());
+    expect(members).toHaveLength(1);
+    expect(members[0]?.role).toBe("OWNER");
+
+    await prisma.organization.delete({ where: { id: orgId } }).catch(() => undefined);
+  });
+
+  it("rolls back the Organization too when the RLS-scoped insert fails — no orphaned org", async () => {
+    const suffix = randomUUID().slice(0, 8);
+    const slug = `atomic-rollback-org-${suffix}`;
+
+    await expect(
+      prisma.$transaction(async (tx) => {
+        const org = await tx.organization.create({ data: { name: `Rollback Org ${suffix}`, slug } });
+        await setTenantContext(tx, org.id);
+        // Deliberately invalid: userId references no real User row, so
+        // the FK constraint fails — simulating any failure between org
+        // creation and membership creation.
+        await tx.organizationMember.create({ data: { organizationId: org.id, userId: randomUUID(), role: "OWNER" } });
+      }),
+    ).rejects.toThrow();
+
+    const found = await prisma.organization.findUnique({ where: { slug } });
+    expect(found).toBeNull();
+  });
+
+  it("rejects a non-UUID orgId", async () => {
+    await expect(prisma.$transaction((tx) => setTenantContext(tx, "not-a-uuid"))).rejects.toThrow("must be a UUID");
   });
 });
