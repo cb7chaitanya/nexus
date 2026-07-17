@@ -196,6 +196,16 @@ describe("ingestion pipeline (extract-text -> chunk-text -> embed-chunks -> proc
     );
     expect(embedded).toHaveLength(chunks.length);
     expect(embedded.every((row) => row.has_embedding)).toBe(true);
+
+    const usageEvents = await withTenantTransaction(organizationId, (tx) => tx.usageEvent.findMany());
+    const embeddingEvents = usageEvents.filter((e) => e.type === "EMBEDDING_TOKENS");
+    expect(embeddingEvents.length).toBeGreaterThan(0);
+    expect(embeddingEvents.every((e) => (e.metadata as Record<string, unknown>).documentId === document.id)).toBe(true);
+    expect(embeddingEvents.every((e) => typeof (e.metadata as Record<string, unknown>).tokenCount === "number")).toBe(true);
+
+    const documentProcessedEvents = usageEvents.filter((e) => e.type === "DOCUMENT_PROCESSED");
+    expect(documentProcessedEvents).toHaveLength(1);
+    expect((documentProcessedEvents[0]!.metadata as Record<string, unknown>).documentId).toBe(document.id);
   });
 
   it("fails the document with a clear reason when the PDF is scanned (no extractable text)", async () => {

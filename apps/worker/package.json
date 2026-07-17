@@ -19,6 +19,7 @@
     "@raas/logger": "workspace:*",
     "@raas/providers": "workspace:*",
     "@raas/shared": "workspace:*",
+    "@raas/usage": "workspace:*",
     "bullmq": "^5.80.5",
     "ioredis": "^5.4.1",
     "pdf-parse": "^2.4.5"

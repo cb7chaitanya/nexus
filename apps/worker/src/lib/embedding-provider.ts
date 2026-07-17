@@ -25,3 +25,10 @@ export function getEmbeddingProvider(): EmbeddingProvider {
   }
   return cached;
 }
+
+/** The model name recorded on EMBEDDING_TOKENS usage events — kept in
+ * sync with getEmbeddingProvider's own selection logic rather than
+ * duplicated at each call site. */
+export function getEmbeddingModelName(): string {
+  return env.EMBEDDING_PROVIDER === "fake" ? "fake" : "text-embedding-3-small";
+}

@@ -1,9 +1,17 @@
 import { withTenantTransaction } from "@raas/db";
+import { recordUsage } from "@raas/usage";
 import { UnrecoverableError, type Job } from "bullmq";
 
-import { getEmbeddingProvider } from "../lib/embedding-provider.js";
+import { getEmbeddingModelName, getEmbeddingProvider } from "../lib/embedding-provider.js";
 import { failDocument, isLastAttempt } from "../lib/job-failure.js";
 import type { EmbedChunksJobData } from "./types.js";
+
+// Same chars-per-token approximation used by chunk-text.ts's own budget
+// packing — neither EmbeddingProvider's interface nor the real OpenAI
+// embeddings response is currently plumbed through with a token count, so
+// this is an estimate, not billing-grade accounting. Documented as such
+// rather than presented as exact.
+const CHARS_PER_TOKEN = 4;
 
 /**
  * Embeds and writes exactly one batch of chunks, in one transaction —
@@ -45,6 +53,19 @@ export async function embedChunksProcessor(job: Job<EmbedChunksJobData>): Promis
         const vectorLiteral = `[${vectors[i]!.join(",")}]`;
         await tx.$executeRaw`UPDATE "DocumentChunk" SET embedding = ${vectorLiteral}::vector WHERE id = ${orderedChunks[i]!.id}`;
       }
+
+      // Same transaction as the embedding writes — one batch's usage
+      // record commits or rolls back atomically with the batch it
+      // describes, never orphaned from it.
+      const approxTokenCount = Math.ceil(orderedChunks.reduce((sum, chunk) => sum + chunk.content.length, 0) / CHARS_PER_TOKEN);
+      await recordUsage(
+        {
+          organizationId,
+          type: "EMBEDDING_TOKENS",
+          metadata: { model: getEmbeddingModelName(), documentId, tokenCount: approxTokenCount, chunkCount: orderedChunks.length },
+        },
+        tx,
+      );
     });
 
     return { embedded: orderedChunks.length };

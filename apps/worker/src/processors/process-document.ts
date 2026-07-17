@@ -1,4 +1,5 @@
 import { withTenantTransaction } from "@raas/db";
+import { recordUsage } from "@raas/usage";
 import type { Job } from "bullmq";
 
 import { failDocument, isLastAttempt } from "../lib/job-failure.js";
@@ -14,15 +15,16 @@ import type { DocumentJobData } from "./types.js";
  * succeeded.
  */
 export async function processDocumentProcessor(job: Job<DocumentJobData>): Promise<void> {
-  const { organizationId, documentId } = job.data;
+  const { organizationId, documentId, knowledgeBaseId } = job.data;
 
   try {
-    await withTenantTransaction(organizationId, (tx) =>
-      tx.document.update({
+    await withTenantTransaction(organizationId, async (tx) => {
+      await tx.document.update({
         where: { id: documentId },
         data: { status: "READY", processedAt: new Date() },
-      }),
-    );
+      });
+      await recordUsage({ organizationId, type: "DOCUMENT_PROCESSED", metadata: { documentId, knowledgeBaseId } }, tx);
+    });
   } catch (err) {
     if (isLastAttempt(job)) {
       await failDocument(organizationId, documentId, err instanceof Error ? err.message : String(err));
