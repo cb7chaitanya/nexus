@@ -9,6 +9,7 @@ import {
 import { withTenantTransaction } from "@raas/db";
 import type { FastifyInstance } from "fastify";
 
+import { DOCUMENT_METADATA_BODY_LIMIT_BYTES } from "../lib/body-limits.js";
 import { requireMembership } from "../lib/membership.js";
 import { paginate } from "../lib/pagination.js";
 import { checkIngestionRateLimit } from "../lib/rate-limit.js";
@@ -87,42 +88,49 @@ export async function knowledgeBaseRoutes(app: FastifyInstance): Promise<void> {
     reply.send(paginate(documents, input.limit));
   });
 
-  app.post("/kb/:id/documents/presign", { preHandler: requireAuth }, async (request, reply) => {
-    const { id: knowledgeBaseId } = request.params as { id: string };
-    const input = parseOrThrow(presignDocumentSchema, request.body);
-    const userId = request.userId;
-    if (!userId) throw ApiError.unauthorized();
+  app.post(
+    "/kb/:id/documents/presign",
+    // Tighter than the app-wide default (lib/body-limits.ts) — this
+    // route's whole body is a file name, a mime type, an org id, and a
+    // byte count, nowhere near the global ceiling.
+    { preHandler: requireAuth, bodyLimit: DOCUMENT_METADATA_BODY_LIMIT_BYTES },
+    async (request, reply) => {
+      const { id: knowledgeBaseId } = request.params as { id: string };
+      const input = parseOrThrow(presignDocumentSchema, request.body);
+      const userId = request.userId;
+      if (!userId) throw ApiError.unauthorized();
 
-    await requireMembership(input.organizationId, userId);
-    await checkIngestionRateLimit(input.organizationId, reply);
+      await requireMembership(input.organizationId, userId);
+      await checkIngestionRateLimit(input.organizationId, reply);
 
-    // Confirming the KB exists AND belongs to this org, then creating the
-    // PENDING_UPLOAD Document row, happen in the same tenant-scoped
-    // transaction — RLS is what actually enforces "ownership" here: a
-    // knowledgeBaseId from a different org simply won't be found.
-    const document = await withTenantTransaction(input.organizationId, async (tx) => {
-      const knowledgeBase = await tx.knowledgeBase.findUnique({ where: { id: knowledgeBaseId } });
-      if (!knowledgeBase) {
-        throw ApiError.notFound("Knowledge base not found");
-      }
+      // Confirming the KB exists AND belongs to this org, then creating
+      // the PENDING_UPLOAD Document row, happen in the same tenant-scoped
+      // transaction — RLS is what actually enforces "ownership" here: a
+      // knowledgeBaseId from a different org simply won't be found.
+      const document = await withTenantTransaction(input.organizationId, async (tx) => {
+        const knowledgeBase = await tx.knowledgeBase.findUnique({ where: { id: knowledgeBaseId } });
+        if (!knowledgeBase) {
+          throw ApiError.notFound("Knowledge base not found");
+        }
 
-      const storageKey = buildStorageKey(input.organizationId, knowledgeBaseId, input.fileName);
+        const storageKey = buildStorageKey(input.organizationId, knowledgeBaseId, input.fileName);
 
-      return tx.document.create({
-        data: {
-          organizationId: input.organizationId,
-          knowledgeBaseId,
-          fileName: input.fileName,
-          mimeType: input.mimeType,
-          sizeBytes: input.sizeBytes,
-          storageKey,
-          uploadedById: userId,
-        },
+        return tx.document.create({
+          data: {
+            organizationId: input.organizationId,
+            knowledgeBaseId,
+            fileName: input.fileName,
+            mimeType: input.mimeType,
+            sizeBytes: input.sizeBytes,
+            storageKey,
+            uploadedById: userId,
+          },
+        });
       });
-    });
 
-    const { url, expiresAt } = await createPresignedUploadUrl(document.storageKey, document.mimeType);
+      const { url, expiresAt } = await createPresignedUploadUrl(document.storageKey, document.mimeType);
 
-    reply.status(201).send({ document, uploadUrl: url, uploadUrlExpiresAt: expiresAt });
-  });
+      reply.status(201).send({ document, uploadUrl: url, uploadUrlExpiresAt: expiresAt });
+    },
+  );
 }

@@ -2,6 +2,7 @@ import { ApiError, completeDocumentSchema, parseOrThrow } from "@raas/shared";
 import { withTenantTransaction } from "@raas/db";
 import type { FastifyInstance } from "fastify";
 
+import { DOCUMENT_METADATA_BODY_LIMIT_BYTES } from "../lib/body-limits.js";
 import { enqueueDocumentIngestion } from "../lib/ingestion-flow.js";
 import { requireMembership } from "../lib/membership.js";
 import { checkDocumentQuota, checkIngestionRateLimit } from "../lib/rate-limit.js";
@@ -9,63 +10,69 @@ import { objectExists } from "../lib/storage.js";
 import { requireAuth } from "../plugins/auth-guard.js";
 
 export async function documentRoutes(app: FastifyInstance): Promise<void> {
-  app.post("/documents/:id/complete", { preHandler: requireAuth }, async (request, reply) => {
-    const { id: documentId } = request.params as { id: string };
-    const input = parseOrThrow(completeDocumentSchema, request.body);
-    const userId = request.userId;
-    if (!userId) throw ApiError.unauthorized();
+  app.post(
+    "/documents/:id/complete",
+    // Tighter than the app-wide default (lib/body-limits.ts) — this
+    // route's whole body is a single organizationId field.
+    { preHandler: requireAuth, bodyLimit: DOCUMENT_METADATA_BODY_LIMIT_BYTES },
+    async (request, reply) => {
+      const { id: documentId } = request.params as { id: string };
+      const input = parseOrThrow(completeDocumentSchema, request.body);
+      const userId = request.userId;
+      if (!userId) throw ApiError.unauthorized();
 
-    await requireMembership(input.organizationId, userId);
-    await checkIngestionRateLimit(input.organizationId, reply);
-    // Daily ceiling on documents actually queued for processing — checked
-    // here (not at presign) since this is the point where the pipeline,
-    // and its real OpenAI embedding cost, actually gets triggered. Placed
-    // before the S3 existence check and status transition below so an
-    // over-quota org gets a fast 429 without the wasted I/O.
-    await checkDocumentQuota(input.organizationId, reply);
+      await requireMembership(input.organizationId, userId);
+      await checkIngestionRateLimit(input.organizationId, reply);
+      // Daily ceiling on documents actually queued for processing — checked
+      // here (not at presign) since this is the point where the pipeline,
+      // and its real OpenAI embedding cost, actually gets triggered. Placed
+      // before the S3 existence check and status transition below so an
+      // over-quota org gets a fast 429 without the wasted I/O.
+      await checkDocumentQuota(input.organizationId, reply);
 
-    // Ownership: the document is looked up scoped to this org's tenant
-    // context, so a documentId belonging to another org is indistinguishable
-    // from a nonexistent one — RLS enforces this, not an app-level owner
-    // check.
-    const document = await withTenantTransaction(input.organizationId, (tx) =>
-      tx.document.findUnique({ where: { id: documentId } }),
-    );
-    if (!document) {
-      throw ApiError.notFound("Document not found");
-    }
-
-    // Status transition: only a document still awaiting its upload can be
-    // completed — this call is not a generic "requeue" endpoint.
-    if (document.status !== "PENDING_UPLOAD") {
-      throw ApiError.conflict(
-        `Cannot complete a document in status ${document.status} — only a document in PENDING_UPLOAD can be completed`,
+      // Ownership: the document is looked up scoped to this org's tenant
+      // context, so a documentId belonging to another org is
+      // indistinguishable from a nonexistent one — RLS enforces this, not
+      // an app-level owner check.
+      const document = await withTenantTransaction(input.organizationId, (tx) =>
+        tx.document.findUnique({ where: { id: documentId } }),
       );
-    }
+      if (!document) {
+        throw ApiError.notFound("Document not found");
+      }
 
-    // Object exists: the client's claim that it finished the S3/R2 PUT is
-    // verified against the bucket, not trusted.
-    const uploaded = await objectExists(document.storageKey);
-    if (!uploaded) {
-      throw ApiError.conflict(
-        "No uploaded object found for this document — the upload may not have completed",
+      // Status transition: only a document still awaiting its upload can
+      // be completed — this call is not a generic "requeue" endpoint.
+      if (document.status !== "PENDING_UPLOAD") {
+        throw ApiError.conflict(
+          `Cannot complete a document in status ${document.status} — only a document in PENDING_UPLOAD can be completed`,
+        );
+      }
+
+      // Object exists: the client's claim that it finished the S3/R2 PUT
+      // is verified against the bucket, not trusted.
+      const uploaded = await objectExists(document.storageKey);
+      if (!uploaded) {
+        throw ApiError.conflict(
+          "No uploaded object found for this document — the upload may not have completed",
+        );
+      }
+
+      const updated = await withTenantTransaction(input.organizationId, (tx) =>
+        tx.document.update({ where: { id: documentId }, data: { status: "QUEUED" } }),
       );
-    }
 
-    const updated = await withTenantTransaction(input.organizationId, (tx) =>
-      tx.document.update({ where: { id: documentId }, data: { status: "QUEUED" } }),
-    );
+      // Enqueued after the QUEUED transition commits, not before — if
+      // enqueueing itself fails, the document is left in a real, visible
+      // QUEUED state rather than a status that claims work is in flight
+      // when it never actually got scheduled.
+      await enqueueDocumentIngestion({
+        documentId,
+        organizationId: input.organizationId,
+        knowledgeBaseId: document.knowledgeBaseId,
+      });
 
-    // Enqueued after the QUEUED transition commits, not before — if
-    // enqueueing itself fails, the document is left in a real, visible
-    // QUEUED state rather than a status that claims work is in flight
-    // when it never actually got scheduled.
-    await enqueueDocumentIngestion({
-      documentId,
-      organizationId: input.organizationId,
-      knowledgeBaseId: document.knowledgeBaseId,
-    });
-
-    reply.send(updated);
-  });
+      reply.send(updated);
+    },
+  );
 }
