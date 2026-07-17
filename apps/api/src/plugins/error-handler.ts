@@ -1,4 +1,5 @@
 import { ApiError } from "@raas/shared";
+import { Prisma } from "@raas/db";
 import type { FastifyError, FastifyInstance } from "fastify";
 
 /**
@@ -15,6 +16,22 @@ export function registerErrorHandler(app: FastifyInstance): void {
     if (err instanceof ApiError) {
       request.log.warn({ err, code: err.code }, err.message);
       reply.status(err.statusCode).send(err.toResponseBody(requestId));
+      return;
+    }
+
+    // Unique constraint violation (P2002) — a race that slipped past
+    // whatever pre-check a route did (e.g. two concurrent signups with
+    // the same slug) lands here as a generic Prisma error otherwise,
+    // which is genuinely the client's fault (a real conflict, not a
+    // server bug) and deserves 409, not 500. One place, so every route
+    // that can hit a unique constraint benefits, not just the ones that
+    // happen to catch it themselves.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      const target = err.meta?.target;
+      const field = Array.isArray(target) ? target.join(", ") : typeof target === "string" ? target : "field";
+      const apiErr = ApiError.conflict(`A record with this ${field} already exists`);
+      request.log.warn({ err, code: apiErr.code }, apiErr.message);
+      reply.status(apiErr.statusCode).send(apiErr.toResponseBody(requestId));
       return;
     }
 

@@ -1,5 +1,5 @@
 import { ApiError, loginSchema, parseOrThrow, signupSchema } from "@raas/shared";
-import { prisma, withTenantTransaction, withUserContext } from "@raas/db";
+import { prisma, setTenantContext, withUserContext } from "@raas/db";
 import type { FastifyInstance } from "fastify";
 
 import { clearSessionCookie, setSessionCookie } from "../lib/cookies.js";
@@ -25,9 +25,16 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       async (candidate) => (await prisma.organization.findUnique({ where: { slug: candidate } })) !== null,
     );
 
-    // User + Organization carry no organizationId and have no RLS policy —
-    // this is a plain transaction, not withTenantTransaction (there's no
-    // tenant to scope by yet, the organization is being created right now).
+    // Atomic: user, org, AND the owner membership are all created in ONE
+    // transaction — a failure anywhere rolls back everything, so signup
+    // is genuinely all-or-nothing, not "mostly atomic with a
+    // compensating delete if the last step fails" (which still had a
+    // real gap: a process crash between steps could orphan a user+org
+    // with no owner and no way to clean it up). setTenantContext sets
+    // app.current_org_id for the rest of THIS transaction using the org
+    // id just created — withTenantTransaction can't be used here since
+    // it always opens its own new transaction, and the org doesn't exist
+    // yet before this one starts.
     const { user, organization } = await prisma.$transaction(async (tx) => {
       const createdUser = await tx.user.create({
         data: { email: input.email, passwordHash, name: input.name },
@@ -35,24 +42,12 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       const createdOrg = await tx.organization.create({
         data: { name: input.organizationName, slug },
       });
+      await setTenantContext(tx, createdOrg.id);
+      await tx.organizationMember.create({
+        data: { organizationId: createdOrg.id, userId: createdUser.id, role: "OWNER" },
+      });
       return { user: createdUser, organization: createdOrg };
     });
-
-    try {
-      await withTenantTransaction(organization.id, (tx) =>
-        tx.organizationMember.create({
-          data: { organizationId: organization.id, userId: user.id, role: "OWNER" },
-        }),
-      );
-    } catch (err) {
-      // Compensate: a user+org pair with no OWNER membership is orphaned
-      // and unusable — signup must be all-or-nothing from the caller's view.
-      await prisma.$transaction([
-        prisma.organization.delete({ where: { id: organization.id } }),
-        prisma.user.delete({ where: { id: user.id } }),
-      ]);
-      throw err;
-    }
 
     const session = await createSession(user.id);
     setSessionCookie(reply, session.token);

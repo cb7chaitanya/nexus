@@ -4,13 +4,15 @@ import {
   changeMemberRoleSchema,
   createOrganizationSchema,
   inviteMemberSchema,
+  listMembersQuerySchema,
   parseOrThrow,
 } from "@raas/shared";
-import { prisma, withTenantTransaction, withUserContext } from "@raas/db";
+import { prisma, setTenantContext, withTenantTransaction, withUserContext } from "@raas/db";
 import type { OrgRole } from "@raas/db";
 import type { FastifyInstance } from "fastify";
 
 import { generateInviteToken, hashInviteToken, INVITE_TTL_MS } from "../lib/invites.js";
+import { paginate } from "../lib/pagination.js";
 import { assertCanRemoveMember, assertCanSetRole } from "../lib/roles.js";
 import { generateUniqueSlug } from "../lib/slugify.js";
 import { requireAuth, requireOrgMembership, requireRole } from "../plugins/auth-guard.js";
@@ -81,18 +83,23 @@ export async function organizationRoutes(app: FastifyInstance): Promise<void> {
       async (candidate) => (await prisma.organization.findUnique({ where: { slug: candidate } })) !== null,
     );
 
-    const organization = await prisma.organization.create({ data: { name: input.name, slug } });
-
-    try {
-      await withTenantTransaction(organization.id, (tx) =>
-        tx.organizationMember.create({
-          data: { organizationId: organization.id, userId, role: "OWNER" },
-        }),
-      );
-    } catch (err) {
-      await prisma.organization.delete({ where: { id: organization.id } });
-      throw err;
-    }
+    // Atomic: the org and its first RLS-scoped row (the owner membership)
+    // are created in ONE transaction. setTenantContext sets
+    // app.current_org_id for the rest of THIS transaction using the id
+    // just created — withTenantTransaction can't be used here since it
+    // always opens its own new transaction, and the org doesn't exist
+    // yet before this one starts. A failure anywhere rolls back
+    // everything, so there is no window where an org exists with no
+    // owner (see @raas/db's setTenantContext for the full reasoning) —
+    // this replaces the previous create-then-compensating-delete
+    // approach, which could still leave an orphan if the process crashed
+    // between the two steps.
+    const organization = await prisma.$transaction(async (tx) => {
+      const org = await tx.organization.create({ data: { name: input.name, slug } });
+      await setTenantContext(tx, org.id);
+      await tx.organizationMember.create({ data: { organizationId: org.id, userId, role: "OWNER" } });
+      return org;
+    });
 
     reply.status(201).send({ ...organization, role: "OWNER" as const });
   });
@@ -115,23 +122,29 @@ export async function organizationRoutes(app: FastifyInstance): Promise<void> {
     { preHandler: [requireAuth, requireOrgMembership] },
     async (request, reply) => {
       const { id } = request.params as { id: string };
+      const input = parseOrThrow(listMembersQuerySchema, request.query);
 
+      // Sort order (asc, oldest first) is unchanged from before
+      // pagination was added.
       const members = await withTenantTransaction(id, (tx) =>
         tx.organizationMember.findMany({
           include: { user: true },
           orderBy: { createdAt: "asc" },
+          take: input.limit,
+          ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
         }),
       );
 
-      reply.send({
-        members: members.map((m) => ({
-          userId: m.userId,
-          role: m.role,
-          email: m.user.email,
-          name: m.user.name,
-          joinedAt: m.createdAt,
-        })),
-      });
+      const shaped = members.map((m) => ({
+        id: m.id,
+        userId: m.userId,
+        role: m.role,
+        email: m.user.email,
+        name: m.user.name,
+        joinedAt: m.createdAt,
+      }));
+
+      reply.send(paginate(shaped, input.limit));
     },
   );
 

@@ -90,7 +90,69 @@ describe("organization routes", () => {
       cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
     });
     expect(response.statusCode).toBe(200);
-    expect(response.json().members).toHaveLength(1);
+    expect(response.json().data).toHaveLength(1);
+  });
+
+  it("returns the paginated { data, nextCursor } envelope for the members list", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: `/organizations/${organizationId}/members?limit=1`,
+      cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.data).toHaveLength(1);
+    // A full page (length === limit) always reports a nextCursor, even
+    // when — as here, with only one member existing — there's nothing
+    // actually behind it; paginate() trades one possible extra empty
+    // page for never risking omitting real data. Fetching the next page
+    // with that cursor is the real "is there more" check.
+    expect(body.nextCursor).toBe(body.data[0].id);
+
+    const nextPage = await app.inject({
+      method: "GET",
+      url: `/organizations/${organizationId}/members?limit=1&cursor=${body.nextCursor}`,
+      cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+    });
+    expect(nextPage.json().data).toEqual([]);
+  });
+
+  it("translates a real unique-constraint violation into 409 CONFLICT, not 500", async () => {
+    // generateUniqueSlug checks-then-creates, which correctly avoids a
+    // collision in the common case — proving the actual race requires
+    // two organization creations to genuinely interleave at the DB
+    // level. Empirically, Promise.all over app.inject() against a fast
+    // local Postgres does not reliably produce that interleaving (tried
+    // directly: 2 and then 10 concurrent same-slug requests, zero real
+    // collisions either time — generateUniqueSlug's pre-check kept
+    // winning cleanly every time). So this triggers a REAL P2002
+    // deterministically instead, then feeds it through the actual
+    // error-handler.ts pipeline via a throwaway route on a fresh app
+    // instance, proving the P2002 -> 409 translation itself is wired up
+    // correctly without depending on an unreliable race.
+    const slug = `conflict-unit-${randomUUID().slice(0, 8)}`;
+    await prisma.organization.create({ data: { name: "First", slug } });
+
+    let duplicateError: unknown;
+    try {
+      await prisma.organization.create({ data: { name: "Second", slug } });
+    } catch (err) {
+      duplicateError = err;
+    }
+    expect(duplicateError).toBeDefined();
+
+    const probeApp = await buildApp();
+    probeApp.get("/__test-only/throw-captured-error", () => {
+      throw duplicateError;
+    });
+    await probeApp.ready();
+
+    const response = await probeApp.inject({ method: "GET", url: "/__test-only/throw-captured-error" });
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error.code).toBe("CONFLICT");
+
+    await probeApp.close();
+    await prisma.organization.deleteMany({ where: { slug } });
   });
 
   let inviteToken: string;
@@ -236,7 +298,7 @@ describe("organization routes", () => {
       url: `/organizations/${organizationId}/members`,
       cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
     });
-    expect(members.json().members).toHaveLength(1);
+    expect(members.json().data).toHaveLength(1);
   });
 
   it("keeps organization membership isolated across tenants through the API", async () => {
