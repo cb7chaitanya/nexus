@@ -11,6 +11,7 @@ import { getEmbeddingProvider } from "../lib/embedding-provider.js";
 import { getLLMModelName, getLLMProvider } from "../lib/llm-provider.js";
 import { requireMembership } from "../lib/membership.js";
 import { checkChatRateLimit, checkChatTokenBudget, recordChatTokenUsage } from "../lib/rate-limit.js";
+import { getReranker } from "../lib/reranker.js";
 import { requireAuth } from "../plugins/auth-guard.js";
 
 // architecture.md §4.6: top-k candidates before context assembly truncates
@@ -76,7 +77,13 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
         limit: TOP_K,
       });
 
-      return { conversation, history, assembled: assembleContext(candidates) };
+      // retrieve -> rerank -> assemble context -> LLM (architecture.md
+      // §4.7). IdentityReranker (the current default) returns candidates
+      // unchanged; the pipeline shape is what makes a real reranker later
+      // a config change in getReranker(), not an edit here.
+      const reranked = await getReranker().rerank({ query: input.message, chunks: candidates });
+
+      return { conversation, history, assembled: assembleContext(reranked) };
     });
 
     const messages = buildChatMessages(assembled.contextText, input.message, history);
