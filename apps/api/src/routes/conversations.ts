@@ -3,19 +3,13 @@ import { ApiError, getConversationQuerySchema, listConversationsQuerySchema, lis
 import type { FastifyInstance } from "fastify";
 
 import { requireMembership } from "../lib/membership.js";
+import { paginate } from "../lib/pagination.js";
 import { requireAuth } from "../plugins/auth-guard.js";
 
-/**
- * Cursor pagination, most-recent-first: both list endpoints below default
- * to the newest page (matching how a chat UI actually loads — the latest
- * conversation/messages first), and a `cursor` (the last id seen on the
- * current page) pages backward into older history. This is the fix for
- * the unbounded-list-endpoint gap flagged against GET /kb and
- * GET /organizations/:id/members — applied here from the start.
- */
-function nextCursor<T extends { id: string }>(page: T[], limit: number): string | null {
-  return page.length === limit ? page[page.length - 1]!.id : null;
-}
+// Cursor pagination, most-recent-first: both list endpoints below default
+// to the newest page (matching how a chat UI actually loads — the latest
+// conversation/messages first), and a `cursor` (the last id seen on the
+// current page) pages backward into older history.
 
 export async function conversationRoutes(app: FastifyInstance): Promise<void> {
   app.get("/conversations", { preHandler: requireAuth }, async (request, reply) => {
@@ -34,7 +28,7 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
       }),
     );
 
-    reply.send({ conversations, nextCursor: nextCursor(conversations, input.limit) });
+    reply.send(paginate(conversations, input.limit));
   });
 
   app.get("/conversations/:id", { preHandler: requireAuth }, async (request, reply) => {
@@ -79,6 +73,6 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
       });
     });
 
-    reply.send({ messages, nextCursor: nextCursor(messages, input.limit) });
+    reply.send(paginate(messages, input.limit));
   });
 }

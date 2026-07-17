@@ -89,8 +89,8 @@ describe("conversation routes", () => {
 
     expect(response.statusCode).toBe(200);
     const body = response.json();
-    expect(body.conversations.length).toBeGreaterThanOrEqual(5);
-    const ids = body.conversations.map((c: { id: string }) => c.id);
+    expect(body.data.length).toBeGreaterThanOrEqual(5);
+    const ids = body.data.map((c: { id: string }) => c.id);
     // The 5th conversation created (index 4) is the most recent — it
     // must appear before the 1st (index 0).
     expect(ids.indexOf(conversationIds[4])).toBeLessThan(ids.indexOf(conversationIds[0]));
@@ -103,7 +103,7 @@ describe("conversation routes", () => {
       cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
     });
     const firstBody = firstPage.json();
-    expect(firstBody.conversations).toHaveLength(2);
+    expect(firstBody.data).toHaveLength(2);
     expect(firstBody.nextCursor).toBeTruthy();
 
     const secondPage = await app.inject({
@@ -112,10 +112,10 @@ describe("conversation routes", () => {
       cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
     });
     const secondBody = secondPage.json();
-    expect(secondBody.conversations).toHaveLength(2);
+    expect(secondBody.data).toHaveLength(2);
 
-    const firstIds = firstBody.conversations.map((c: { id: string }) => c.id);
-    const secondIds = secondBody.conversations.map((c: { id: string }) => c.id);
+    const firstIds = firstBody.data.map((c: { id: string }) => c.id);
+    const secondIds = secondBody.data.map((c: { id: string }) => c.id);
     expect(firstIds.some((id: string) => secondIds.includes(id))).toBe(false);
   });
 
@@ -146,12 +146,12 @@ describe("conversation routes", () => {
     });
     expect(response.statusCode).toBe(200);
     const body = response.json();
-    expect(body.messages).toHaveLength(2);
+    expect(body.data).toHaveLength(2);
     // ASSISTANT was created after USER within the same turn — clock_timestamp()
     // (not now()) is what makes their createdAt genuinely distinct despite
     // both inserts happening in one transaction (see schema.prisma's
     // Message.createdAt comment). Most-recent-first means ASSISTANT first.
-    expect(body.messages.map((m: { role: string }) => m.role)).toEqual(["ASSISTANT", "USER"]);
+    expect(body.data.map((m: { role: string }) => m.role)).toEqual(["ASSISTANT", "USER"]);
   });
 
   it("requires authentication", async () => {
@@ -194,6 +194,6 @@ describe("conversation routes", () => {
       cookies: { [SESSION_COOKIE_NAME]: outsiderCookie },
     });
     expect(response.statusCode).toBe(200);
-    expect(response.json().conversations).toEqual([]);
+    expect(response.json().data).toEqual([]);
   });
 });
