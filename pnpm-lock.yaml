@@ -59,9 +59,15 @@ importers:
       '@raas/providers':
         specifier: workspace:*
         version: link:../../packages/providers
+      '@raas/rate-limit':
+        specifier: workspace:*
+        version: link:../../packages/rate-limit
       '@raas/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@raas/usage':
+        specifier: workspace:*
+        version: link:../../packages/usage
       argon2:
         specifier: ^0.41.1
         version: 0.41.1
@@ -145,6 +151,9 @@ importers:
       '@raas/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@raas/usage':
+        specifier: workspace:*
+        version: link:../../packages/usage
       bullmq:
         specifier: ^5.80.5
         version: 5.80.5
@@ -216,6 +225,9 @@ importers:
 
   packages/core:
     dependencies:
+      '@prisma/client':
+        specifier: ^5.18.0
+        version: 5.22.0(prisma@5.22.0)
       '@raas/db':
         specifier: workspace:*
         version: link:../db
@@ -229,6 +241,9 @@ importers:
       dotenv-cli:
         specifier: ^7.4.2
         version: 7.4.4
+      tsx:
+        specifier: ^4.19.0
+        version: 4.23.1
       typescript:
         specifier: ^5.5.4
         version: 5.9.3
@@ -286,6 +301,24 @@ importers:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@20.19.43)
 
+  packages/rate-limit:
+    devDependencies:
+      '@raas/config':
+        specifier: workspace:*
+        version: link:../config
+      dotenv-cli:
+        specifier: ^7.4.2
+        version: 7.4.4
+      ioredis:
+        specifier: ^5.4.1
+        version: 5.11.1
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.19.43)
+
   packages/shared:
     dependencies:
       zod:
@@ -295,6 +328,25 @@ importers:
       '@raas/config':
         specifier: workspace:*
         version: link:../config
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.19.43)
+
+  packages/usage:
+    dependencies:
+      '@raas/db':
+        specifier: workspace:*
+        version: link:../db
+    devDependencies:
+      '@raas/config':
+        specifier: workspace:*
+        version: link:../config
+      dotenv-cli:
+        specifier: ^7.4.2
+        version: 7.4.4
       typescript:
         specifier: ^5.5.4
         version: 5.9.3

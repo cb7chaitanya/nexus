@@ -8,6 +8,7 @@ import { ensureBucketExists } from "./lib/storage.js";
 import { registerErrorHandler } from "./plugins/error-handler.js";
 import { authRoutes } from "./routes/auth.js";
 import { chatRoutes } from "./routes/chat.js";
+import { conversationRoutes } from "./routes/conversations.js";
 import { documentRoutes } from "./routes/documents.js";
 import { knowledgeBaseRoutes } from "./routes/knowledge-bases.js";
 import { organizationRoutes } from "./routes/organizations.js";
@@ -33,6 +34,13 @@ export async function buildApp(): Promise<FastifyInstance> {
     // default sequential "req-1" counter (which resets per-process and
     // leaks request volume) isn't good enough.
     genReqId: () => randomUUID(),
+    // Rate limiting (lib/rate-limit.ts) keys on request.ip — behind a real
+    // reverse proxy/load balancer, that's only correct if Fastify trusts
+    // X-Forwarded-For/X-Real-IP rather than resolving to the proxy's own
+    // address for every request. Harmless with no proxy in front (falls
+    // back to the raw socket address, which is what request.ip already
+    // was without this).
+    trustProxy: true,
   });
 
   await app.register(fastifyCookie);
@@ -48,6 +56,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(knowledgeBaseRoutes);
   await app.register(documentRoutes);
   await app.register(chatRoutes);
+  await app.register(conversationRoutes);
 
   return app;
 }

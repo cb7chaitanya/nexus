@@ -41,5 +41,23 @@ export const env = {
   // being "openai" means a real key is load-bearing.
   OPENAI_API_KEY:
     process.env.EMBEDDING_PROVIDER === "fake" && process.env.LLM_PROVIDER === "fake" ? (process.env.OPENAI_API_KEY ?? "") : requireEnv("OPENAI_API_KEY"),
+  // Rate limiting (packages/rate-limit). The auth default here is
+  // deliberately higher than the ticket's own "10/minute/IP" example —
+  // every apps.inject() test request in this suite shares one apparent
+  // IP (127.0.0.1), and app.ts's trustProxy setting means that's the
+  // real key these limits are checked against. A real deployment behind
+  // a reverse proxy sees real per-client IPs and should set this via env
+  // to something much closer to the ticket's example.
+  RATE_LIMIT_AUTH_MAX: Number(process.env.RATE_LIMIT_AUTH_MAX ?? 50),
+  RATE_LIMIT_AUTH_WINDOW_SECONDS: Number(process.env.RATE_LIMIT_AUTH_WINDOW_SECONDS ?? 60),
+  RATE_LIMIT_CHAT_ORG_RPM: Number(process.env.RATE_LIMIT_CHAT_ORG_RPM ?? 30),
+  RATE_LIMIT_CHAT_USER_RPM: Number(process.env.RATE_LIMIT_CHAT_USER_RPM ?? 20),
+  // Org-scoped, not per-user — matches how usage/billing is tracked
+  // everywhere else in this schema (UsageEvent.organizationId is the
+  // primary dimension; userId is auxiliary).
+  RATE_LIMIT_CHAT_TOKEN_BUDGET_DAILY: Number(process.env.RATE_LIMIT_CHAT_TOKEN_BUDGET_DAILY ?? 200_000),
+  // How many prior turns (user+assistant pairs) are loaded as
+  // conversation history and replayed into the prompt.
+  CHAT_HISTORY_MESSAGE_LIMIT: Number(process.env.CHAT_HISTORY_MESSAGE_LIMIT ?? 20),
   NODE_ENV: process.env.NODE_ENV ?? "development",
 };

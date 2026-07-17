@@ -15,3 +15,11 @@ export function getLLMProvider(): LLMProvider {
   }
   return provider;
 }
+
+/** The model name recorded on CHAT_PROMPT_TOKENS/CHAT_COMPLETION_TOKENS
+ * usage events and Message.usageMetadata — kept in sync with
+ * getLLMProvider's own selection logic rather than duplicated at each
+ * call site. */
+export function getLLMModelName(): string {
+  return env.LLM_PROVIDER === "fake" ? "fake" : env.OPENAI_CHAT_MODEL;
+}

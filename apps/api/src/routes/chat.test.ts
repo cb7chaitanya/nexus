@@ -58,6 +58,7 @@ describe("chat route", () => {
   const password = "correct-horse-battery-staple";
 
   let ownerCookie: string;
+  let ownerUserId: string;
   let organizationId: string;
   let outsiderCookie: string;
   let knowledgeBaseId: string;
@@ -72,6 +73,7 @@ describe("chat route", () => {
 
     const owner = await signup(app, `chat-owner-${suffix}@example.com`, password, `Chat Org ${suffix}`);
     ownerCookie = owner.sessionCookie;
+    ownerUserId = owner.userId;
     organizationId = owner.organizationId;
 
     const outsider = await signup(app, `chat-outsider-${suffix}@example.com`, password, `Chat Outsider Org ${suffix}`);
@@ -207,4 +209,138 @@ describe("chat route", () => {
     });
     expect(response.statusCode).toBe(422);
   });
+
+  it("records CHAT_REQUEST/CHAT_PROMPT_TOKENS/CHAT_COMPLETION_TOKENS usage events", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: `/kb/${knowledgeBaseId}/chat`,
+      cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      payload: { organizationId, message: `usage metering probe ${randomUUID()}` },
+    });
+    expect(response.statusCode).toBe(200);
+    const conversationId = await lastConversationId(organizationId);
+
+    const events = await withTenantTransaction(organizationId, (tx) => tx.usageEvent.findMany({ where: { userId: ownerUserId } }));
+    expect(events.some((e) => e.type === "CHAT_REQUEST")).toBe(true);
+    const promptEvent = events.find((e) => e.type === "CHAT_PROMPT_TOKENS" && (e.metadata as Record<string, unknown>).conversationId === conversationId);
+    const completionEvent = events.find((e) => e.type === "CHAT_COMPLETION_TOKENS" && (e.metadata as Record<string, unknown>).conversationId === conversationId);
+    expect(promptEvent).toBeDefined();
+    expect(completionEvent).toBeDefined();
+    expect(typeof (promptEvent!.metadata as Record<string, unknown>).tokenCount).toBe("number");
+    expect((promptEvent!.metadata as Record<string, unknown>).model).toBe("fake");
+  });
+
+  it("persists the user + assistant messages and citations, and continues the same conversation across two calls", async () => {
+    const first = await app.inject({
+      method: "POST",
+      url: `/kb/${knowledgeBaseId}/chat`,
+      cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      payload: { organizationId, message },
+    });
+    expect(first.statusCode).toBe(200);
+    const conversationId = await lastConversationId(organizationId);
+
+    const second = await app.inject({
+      method: "POST",
+      url: `/kb/${knowledgeBaseId}/chat`,
+      cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      payload: { organizationId, message: "follow-up question", conversationId },
+    });
+    expect(second.statusCode).toBe(200);
+
+    // A conversationId was supplied on the second call — it must not have
+    // created a second conversation.
+    const secondConversationId = await lastConversationId(organizationId);
+    expect(secondConversationId).toBe(conversationId);
+
+    const dbMessages = await withTenantTransaction(organizationId, (tx) =>
+      tx.message.findMany({ where: { conversationId }, orderBy: { createdAt: "asc" } }),
+    );
+    expect(dbMessages).toHaveLength(4);
+    expect(dbMessages.map((m) => m.role)).toEqual(["USER", "ASSISTANT", "USER", "ASSISTANT"]);
+    expect(dbMessages[0]!.content).toBe(message);
+    expect(dbMessages[2]!.content).toBe("follow-up question");
+    // Persisted content is the clean, marker-stripped text — never a raw
+    // internal citation marker.
+    for (const m of dbMessages) {
+      expect(m.content).not.toContain("[[chunk:");
+    }
+    expect(dbMessages[1]!.citations).not.toEqual([]);
+  });
+
+  it("rejects continuing another organization's conversation (404, indistinguishable from a nonexistent id)", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: `/kb/${knowledgeBaseId}/chat`,
+      cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      payload: { organizationId, message: `cross-tenant setup ${randomUUID()}` },
+    });
+    expect(created.statusCode).toBe(200);
+    const conversationId = await lastConversationId(organizationId);
+
+    const outsiderOrg = await signup(app, `chat-outsider-org-${suffix}@example.com`, password, `Chat Outsider's Own Org ${suffix}`);
+    const outsiderKb = await withTenantTransaction(outsiderOrg.organizationId, (tx) =>
+      tx.knowledgeBase.create({
+        data: {
+          organizationId: outsiderOrg.organizationId,
+          name: "Outsider KB",
+          embeddingProvider: "openai",
+          embeddingModel: "text-embedding-3-small",
+          embeddingDim: PLATFORM_EMBEDDING_DIM,
+        },
+      }),
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/kb/${outsiderKb.id}/chat`,
+      cookies: { [SESSION_COOKIE_NAME]: outsiderOrg.sessionCookie },
+      payload: { organizationId: outsiderOrg.organizationId, message: "trying to hijack", conversationId },
+    });
+
+    expect(response.statusCode).toBe(404);
+
+    // The other org's conversation must be completely untouched — no
+    // extra messages appended to it.
+    const messages = await withTenantTransaction(organizationId, (tx) => tx.message.findMany({ where: { conversationId } }));
+    expect(messages).toHaveLength(2);
+  });
+
+  it("returns 429 with the rate-limit envelope and headers once the per-user chat limit is exceeded", async () => {
+    const limited = await signup(app, `chat-limited-${suffix}@example.com`, password, `Chat Limited Org ${suffix}`);
+    const kb = await withTenantTransaction(limited.organizationId, (tx) =>
+      tx.knowledgeBase.create({
+        data: {
+          organizationId: limited.organizationId,
+          name: "Rate Limit KB",
+          embeddingProvider: "openai",
+          embeddingModel: "text-embedding-3-small",
+          embeddingDim: PLATFORM_EMBEDDING_DIM,
+        },
+      }),
+    );
+
+    let lastResponse;
+    // RATE_LIMIT_CHAT_USER_RPM defaults to 20 — the 21st request in this
+    // dedicated org/user's own 60s window must be denied.
+    for (let i = 0; i < 21; i++) {
+      lastResponse = await app.inject({
+        method: "POST",
+        url: `/kb/${kb.id}/chat`,
+        cookies: { [SESSION_COOKIE_NAME]: limited.sessionCookie },
+        payload: { organizationId: limited.organizationId, message: `rate limit probe ${i}` },
+      });
+    }
+
+    expect(lastResponse!.statusCode).toBe(429);
+    expect(lastResponse!.json()).toMatchObject({ error: { code: "RATE_LIMIT_EXCEEDED" } });
+    expect(lastResponse!.headers["x-ratelimit-limit"]).toBeDefined();
+    expect(lastResponse!.headers["x-ratelimit-remaining"]).toBe("0");
+    expect(Number(lastResponse!.headers["retry-after"])).toBeGreaterThan(0);
+  });
+
+  async function lastConversationId(orgId: string): Promise<string> {
+    const conversations = await withTenantTransaction(orgId, (tx) => tx.conversation.findMany({ orderBy: { createdAt: "desc" }, take: 1 }));
+    return conversations[0]!.id;
+  }
 });

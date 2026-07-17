@@ -1,16 +1,31 @@
 import { assembleContext, buildChatMessages, CitationMarkerFilter, embedQuery, searchSimilarChunks, validateCitations } from "@raas/core";
 import { withTenantTransaction } from "@raas/db";
+import type { Prisma } from "@raas/db";
+import { recordUsage } from "@raas/usage";
 import { ApiError, chatSchema, parseOrThrow } from "@raas/shared";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
+import { env } from "../env.js";
+import { findOrCreateConversation, loadConversationHistory } from "../lib/conversation.js";
 import { getEmbeddingProvider } from "../lib/embedding-provider.js";
-import { getLLMProvider } from "../lib/llm-provider.js";
+import { getLLMModelName, getLLMProvider } from "../lib/llm-provider.js";
 import { requireMembership } from "../lib/membership.js";
+import { checkChatRateLimit, checkChatTokenBudget, recordChatTokenUsage } from "../lib/rate-limit.js";
 import { requireAuth } from "../plugins/auth-guard.js";
 
 // architecture.md §4.6: top-k candidates before context assembly truncates
 // to a token budget.
 const TOP_K = 8;
+// Same chars-per-token approximation used across this codebase (see
+// apps/worker's embed-chunks.ts and packages/core's assembleContext) —
+// neither LLMProvider's interface nor the real OpenAI streaming response
+// currently exposes real token usage without a larger interface change,
+// so this is an estimate, not billing-grade accounting.
+const CHARS_PER_TOKEN = 4;
+
+function approxTokens(text: string): number {
+  return Math.ceil(text.length / CHARS_PER_TOKEN);
+}
 
 function sendEvent(reply: FastifyReply, event: string, data: unknown): void {
   reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -25,15 +40,31 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
 
     await requireMembership(input.organizationId, userId);
 
-    // Retrieval happens entirely before the response commits to SSE: a
-    // missing KB, a validation failure, or an embedding-provider error
-    // here still returns a normal { error: ... } JSON response through
-    // the standard error handler, never a half-open stream.
-    const assembled = await withTenantTransaction(input.organizationId, async (tx) => {
+    // Rate limiting before any retrieval/generation work starts — a
+    // limit-exceeded response is a normal ApiError (429) through the
+    // standard error handler, never a partial/half-open stream.
+    await checkChatRateLimit({ organizationId: input.organizationId, userId }, reply);
+    await checkChatTokenBudget(input.organizationId, reply);
+
+    // Steps 1-3 of the ticket's chat flow: create/find conversation, load
+    // history, retrieve context. Everything here can still fail with a
+    // normal JSON error response — the response only commits to SSE once
+    // this transaction (and therefore retrieval) has actually succeeded.
+    const { conversation, history, assembled } = await withTenantTransaction(input.organizationId, async (tx) => {
       const knowledgeBase = await tx.knowledgeBase.findUnique({ where: { id: knowledgeBaseId } });
       if (!knowledgeBase) {
         throw ApiError.notFound("Knowledge base not found");
       }
+
+      const conversation = await findOrCreateConversation(tx, {
+        organizationId: input.organizationId,
+        userId,
+        knowledgeBaseId,
+        conversationId: input.conversationId,
+        firstMessage: input.message,
+      });
+
+      const history = await loadConversationHistory(tx, conversation.id, env.CHAT_HISTORY_MESSAGE_LIMIT);
 
       // Same model the KB's chunks were embedded with — retrieval never
       // lets the caller pick a different one (architecture.md §4.6).
@@ -45,10 +76,11 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
         limit: TOP_K,
       });
 
-      return assembleContext(candidates);
+      return { conversation, history, assembled: assembleContext(candidates) };
     });
 
-    const messages = buildChatMessages(assembled.contextText, input.message);
+    const messages = buildChatMessages(assembled.contextText, input.message, history);
+    const promptTokens = approxTokens(messages.map((m) => m.content).join("\n"));
 
     // From here on the response is committed to SSE — reply.hijack() tells
     // Fastify not to touch the response itself, since we're writing to the
@@ -65,13 +97,20 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
     // they're an internal signal for citation parsing, never something a
     // user should see (implementation-plan.md §2 item 5).
     const filter = new CitationMarkerFilter();
+    let cleanText = "";
     try {
       for await (const delta of getLLMProvider().streamCompletion(messages)) {
         const safe = filter.push(delta);
-        if (safe) sendEvent(reply, "token", { text: safe });
+        if (safe) {
+          cleanText += safe;
+          sendEvent(reply, "token", { text: safe });
+        }
       }
       const trailing = filter.flush();
-      if (trailing) sendEvent(reply, "token", { text: trailing });
+      if (trailing) {
+        cleanText += trailing;
+        sendEvent(reply, "token", { text: trailing });
+      }
 
       // Citations are only ever sent once generation AND validation are
       // both complete — never derived from markers as they stream past,
@@ -83,6 +122,61 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
       // validateCitations's own doc comment).
       const citations = validateCitations(filter.fullText, assembled.chunks);
       sendEvent(reply, "citations", { citations });
+
+      const completionTokens = approxTokens(cleanText);
+      const model = getLLMModelName();
+
+      // Step 6: persist user message, assistant message, citations, and
+      // usage — all in one transaction, only after generation and
+      // validation both succeeded. If this fails, the answer the client
+      // already received is real and complete; this only means it wasn't
+      // saved to history, which is why the SSE error event here has a
+      // distinct, more accurate message than a generation failure.
+      try {
+        await withTenantTransaction(input.organizationId, async (tx) => {
+          await tx.message.create({
+            data: { organizationId: input.organizationId, conversationId: conversation.id, role: "USER", content: input.message },
+          });
+          await tx.message.create({
+            data: {
+              organizationId: input.organizationId,
+              conversationId: conversation.id,
+              role: "ASSISTANT",
+              content: cleanText,
+              citations: citations as unknown as Prisma.InputJsonValue,
+              usageMetadata: { model, promptTokens, completionTokens },
+            },
+          });
+          await recordUsage(
+            { organizationId: input.organizationId, userId, type: "CHAT_REQUEST", metadata: { conversationId: conversation.id, knowledgeBaseId } },
+            tx,
+          );
+          await recordUsage(
+            { organizationId: input.organizationId, userId, type: "CHAT_PROMPT_TOKENS", metadata: { model, conversationId: conversation.id, tokenCount: promptTokens } },
+            tx,
+          );
+          await recordUsage(
+            {
+              organizationId: input.organizationId,
+              userId,
+              type: "CHAT_COMPLETION_TOKENS",
+              metadata: { model, conversationId: conversation.id, tokenCount: completionTokens },
+            },
+            tx,
+          );
+        });
+      } catch (persistErr) {
+        request.log.error({ err: persistErr }, "failed to persist chat message/usage after successful generation");
+        sendEvent(reply, "error", { message: "Your answer was generated successfully but could not be saved to conversation history" });
+      }
+
+      // Best-effort: record actual token usage against the daily
+      // rate-limit budget after the fact (see recordChatTokenUsage's doc
+      // comment — this can't happen before generation, since nobody knows
+      // the token count yet).
+      await recordChatTokenUsage(input.organizationId, promptTokens + completionTokens).catch((err: unknown) => {
+        request.log.error({ err }, "failed to record chat token usage against the daily rate-limit budget");
+      });
     } catch (err) {
       request.log.error({ err }, "chat generation failed mid-stream");
       sendEvent(reply, "error", { message: "Generation failed" });
