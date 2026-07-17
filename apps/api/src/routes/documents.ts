@@ -2,6 +2,7 @@ import { ApiError, completeDocumentSchema, parseOrThrow } from "@raas/shared";
 import { withTenantTransaction } from "@raas/db";
 import type { FastifyInstance } from "fastify";
 
+import { enqueueDocumentIngestion } from "../lib/ingestion-flow.js";
 import { requireMembership } from "../lib/membership.js";
 import { objectExists } from "../lib/storage.js";
 import { requireAuth } from "../plugins/auth-guard.js";
@@ -43,12 +44,19 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
       );
     }
 
-    // Enqueueing the ingestion job is stubbed until extraction exists (see
-    // docs/implementation-plan.md, RAAS-19) — this only records that the
-    // document is ready to be picked up.
     const updated = await withTenantTransaction(input.organizationId, (tx) =>
       tx.document.update({ where: { id: documentId }, data: { status: "QUEUED" } }),
     );
+
+    // Enqueued after the QUEUED transition commits, not before — if
+    // enqueueing itself fails, the document is left in a real, visible
+    // QUEUED state rather than a status that claims work is in flight
+    // when it never actually got scheduled.
+    await enqueueDocumentIngestion({
+      documentId,
+      organizationId: input.organizationId,
+      knowledgeBaseId: document.knowledgeBaseId,
+    });
 
     reply.send(updated);
   });
