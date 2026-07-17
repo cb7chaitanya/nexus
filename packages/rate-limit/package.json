@@ -1,0 +1,34 @@
+{
+  "name": "@raas/rate-limit",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist .turbo",
+    "test": "dotenv -e ../../.env -- vitest run",
+    "test:watch": "dotenv -e ../../.env -- vitest"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@raas/config": "workspace:*",
+    "dotenv-cli": "^7.4.2",
+    "ioredis": "^5.4.1",
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.9"
+  },
+  "peerDependencies": {
+    "ioredis": "^5.4.1"
+  }
+}
