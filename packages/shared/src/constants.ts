@@ -19,6 +19,10 @@ export const QUEUE_NAMES = {
   processing: "document-processing",
   extraction: "document-extraction",
   embedding: "document-embedding",
+  // Scheduled maintenance, not part of the ingestion flow itself — finds
+  // Documents stuck in QUEUED/PROCESSING past a threshold and fails them
+  // visibly (docs/architecture.md §6.2, docs/decisions.md R8).
+  sweep: "document-sweep",
 } as const;
 
 export const JOB_NAMES = {
@@ -26,4 +30,5 @@ export const JOB_NAMES = {
   extractText: "extract-text",
   chunkText: "chunk-text",
   embedChunks: "embed-chunks",
+  sweepStuckDocuments: "sweep-stuck-documents",
 } as const;
