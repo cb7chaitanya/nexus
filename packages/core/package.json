@@ -18,15 +18,18 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist .turbo",
     "test": "dotenv -e ../../.env -- vitest run",
-    "test:watch": "dotenv -e ../../.env -- vitest"
+    "test:watch": "dotenv -e ../../.env -- vitest",
+    "benchmark": "dotenv -e ../../.env -- tsx scripts/benchmark-vector-search.ts"
   },
   "dependencies": {
+    "@prisma/client": "^5.18.0",
     "@raas/db": "workspace:*",
     "@raas/providers": "workspace:*"
   },
   "devDependencies": {
     "@raas/config": "workspace:*",
     "dotenv-cli": "^7.4.2",
+    "tsx": "^4.19.0",
     "typescript": "^5.5.4",
     "vitest": "^2.1.9"
   }
