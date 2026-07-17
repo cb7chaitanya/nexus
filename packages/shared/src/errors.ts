@@ -15,6 +15,7 @@ export const API_ERROR_CODES = {
   FORBIDDEN: "FORBIDDEN",
   NOT_FOUND: "NOT_FOUND",
   CONFLICT: "CONFLICT",
+  RATE_LIMIT_EXCEEDED: "RATE_LIMIT_EXCEEDED",
   INTERNAL_ERROR: "INTERNAL_ERROR",
 } as const;
 
@@ -27,6 +28,7 @@ const STATUS_BY_CODE: Record<ApiErrorCode, number> = {
   FORBIDDEN: 403,
   NOT_FOUND: 404,
   CONFLICT: 409,
+  RATE_LIMIT_EXCEEDED: 429,
   INTERNAL_ERROR: 500,
 };
 
@@ -85,6 +87,10 @@ export class ApiError extends Error {
 
   static conflict(message: string, details?: ApiErrorDetail[]): ApiError {
     return new ApiError("CONFLICT", message, details);
+  }
+
+  static rateLimited(message = "Too many requests"): ApiError {
+    return new ApiError("RATE_LIMIT_EXCEEDED", message);
   }
 
   static internal(message = "Internal server error"): ApiError {

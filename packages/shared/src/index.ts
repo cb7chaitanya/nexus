@@ -28,3 +28,5 @@ export { completeDocumentSchema, presignDocumentSchema } from "./schemas/documen
 export type { CompleteDocumentInput, PresignDocumentInput } from "./schemas/documents.js";
 export { chatSchema } from "./schemas/chat.js";
 export type { ChatInput } from "./schemas/chat.js";
+export { getConversationQuerySchema, listConversationsQuerySchema, listMessagesQuerySchema } from "./schemas/conversations.js";
+export type { GetConversationQuery, ListConversationsQuery, ListMessagesQuery } from "./schemas/conversations.js";

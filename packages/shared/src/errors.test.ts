@@ -10,6 +10,7 @@ describe("ApiError", () => {
     expect(ApiError.forbidden()).toMatchObject({ code: "FORBIDDEN", statusCode: 403 });
     expect(ApiError.notFound()).toMatchObject({ code: "NOT_FOUND", statusCode: 404 });
     expect(ApiError.conflict("x")).toMatchObject({ code: "CONFLICT", statusCode: 409 });
+    expect(ApiError.rateLimited()).toMatchObject({ code: "RATE_LIMIT_EXCEEDED", statusCode: 429 });
     expect(ApiError.internal()).toMatchObject({ code: "INTERNAL_ERROR", statusCode: 500 });
   });
 
