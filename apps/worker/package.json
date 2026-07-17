@@ -9,19 +9,26 @@
     "start": "dotenv -e ../../.env -- node dist/index.js",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "clean": "rm -rf dist .turbo"
+    "clean": "rm -rf dist .turbo",
+    "test": "dotenv -e ../../.env -- vitest run",
+    "test:watch": "dotenv -e ../../.env -- vitest"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.699.0",
     "@raas/db": "workspace:*",
     "@raas/logger": "workspace:*",
+    "@raas/providers": "workspace:*",
     "@raas/shared": "workspace:*",
-    "ioredis": "^5.4.1"
+    "bullmq": "^5.80.5",
+    "ioredis": "^5.4.1",
+    "pdf-parse": "^2.4.5"
   },
   "devDependencies": {
     "@raas/config": "workspace:*",
     "@types/node": "^20.14.0",
     "dotenv-cli": "^7.4.2",
     "tsx": "^4.19.0",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.9"
   }
 }
