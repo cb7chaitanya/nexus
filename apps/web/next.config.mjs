@@ -9,6 +9,10 @@ const workspaceRoot = fileURLToPath(new URL("../..", import.meta.url));
 const nextConfig = {
   reactStrictMode: true,
   outputFileTracingRoot: workspaceRoot,
+  // Self-contained server bundle (server.js + only the node_modules it
+  // actually traces as reachable) — the standard Docker-friendly output
+  // mode; see apps/web/Dockerfile.
+  output: "standalone",
 };
 
 export default nextConfig;
