@@ -39,7 +39,7 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
     const userId = request.userId;
     if (!userId) throw ApiError.unauthorized();
 
-    await requireMembership(input.organizationId, userId);
+    await requireMembership(request, input.organizationId, userId);
 
     // Rate limiting before any retrieval/generation work starts — a
     // limit-exceeded response is a normal ApiError (429) through the

@@ -24,7 +24,7 @@ export async function knowledgeBaseRoutes(app: FastifyInstance): Promise<void> {
 
     // Any member may create a KB — MVP access is org-level, not role-gated
     // (see architecture.md's "Document permissions" section).
-    await requireMembership(input.organizationId, userId);
+    await requireMembership(request, input.organizationId, userId);
     await checkIngestionRateLimit(input.organizationId, reply);
 
     const knowledgeBase = await withTenantTransaction(input.organizationId, (tx) =>
@@ -47,7 +47,7 @@ export async function knowledgeBaseRoutes(app: FastifyInstance): Promise<void> {
     const userId = request.userId;
     if (!userId) throw ApiError.unauthorized();
 
-    await requireMembership(input.organizationId, userId);
+    await requireMembership(request, input.organizationId, userId);
 
     // Sort order (asc, oldest first) is unchanged from before pagination
     // was added — cursor pagination is additive on top of it, not a
@@ -69,7 +69,7 @@ export async function knowledgeBaseRoutes(app: FastifyInstance): Promise<void> {
     const userId = request.userId;
     if (!userId) throw ApiError.unauthorized();
 
-    await requireMembership(input.organizationId, userId);
+    await requireMembership(request, input.organizationId, userId);
 
     const documents = await withTenantTransaction(input.organizationId, async (tx) => {
       const knowledgeBase = await tx.knowledgeBase.findUnique({ where: { id: knowledgeBaseId } });
@@ -100,7 +100,7 @@ export async function knowledgeBaseRoutes(app: FastifyInstance): Promise<void> {
       const userId = request.userId;
       if (!userId) throw ApiError.unauthorized();
 
-      await requireMembership(input.organizationId, userId);
+      await requireMembership(request, input.organizationId, userId);
       await checkIngestionRateLimit(input.organizationId, reply);
 
       // Confirming the KB exists AND belongs to this org, then creating

@@ -17,7 +17,7 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
     const userId = request.userId;
     if (!userId) throw ApiError.unauthorized();
 
-    await requireMembership(input.organizationId, userId);
+    await requireMembership(request, input.organizationId, userId);
 
     const conversations = await withTenantTransaction(input.organizationId, (tx) =>
       tx.conversation.findMany({
@@ -37,7 +37,7 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
     const userId = request.userId;
     if (!userId) throw ApiError.unauthorized();
 
-    await requireMembership(input.organizationId, userId);
+    await requireMembership(request, input.organizationId, userId);
 
     // Ownership: scoped to this org's tenant context, so a conversation
     // id belonging to another org is indistinguishable from a
@@ -57,7 +57,7 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
     const userId = request.userId;
     if (!userId) throw ApiError.unauthorized();
 
-    await requireMembership(input.organizationId, userId);
+    await requireMembership(request, input.organizationId, userId);
 
     const messages = await withTenantTransaction(input.organizationId, async (tx) => {
       const conversation = await tx.conversation.findUnique({ where: { id } });

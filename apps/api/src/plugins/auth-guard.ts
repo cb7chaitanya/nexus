@@ -35,6 +35,10 @@ export async function requireAuth(request: FastifyRequest, _reply: FastifyReply)
 
   request.userId = session.userId;
   request.sessionId = session.sessionId;
+  // Every log line for the rest of this request should carry userId —
+  // never the session token/cookie itself, only the id (see
+  // @raas/logger's LogBindings and app.ts's requestIdLogLabel).
+  request.log = request.log.child({ userId: session.userId });
 }
 
 /**
@@ -55,7 +59,7 @@ export async function requireOrgMembership(request: FastifyRequest, _reply: Fast
     throw ApiError.notFound("Organization not found");
   }
 
-  const role = await requireMembership(organizationId, request.userId);
+  const role = await requireMembership(request, organizationId, request.userId);
   request.membership = { organizationId, role };
 }
 

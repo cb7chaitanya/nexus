@@ -21,7 +21,7 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
       const userId = request.userId;
       if (!userId) throw ApiError.unauthorized();
 
-      await requireMembership(input.organizationId, userId);
+      await requireMembership(request, input.organizationId, userId);
       await checkIngestionRateLimit(input.organizationId, reply);
       // Daily ceiling on documents actually queued for processing — checked
       // here (not at presign) since this is the point where the pipeline,

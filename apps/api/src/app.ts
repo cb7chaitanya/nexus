@@ -40,6 +40,15 @@ export async function buildApp(): Promise<FastifyInstance> {
     // default sequential "req-1" counter (which resets per-process and
     // leaks request volume) isn't good enough.
     genReqId: () => randomUUID(),
+    // Fastify's own per-request child logger (request.log) auto-binds the
+    // generated id under this label on every log line it produces —
+    // renamed from Fastify's default "reqId" to "requestId" to match
+    // @raas/logger's LogBindings field name (and the { error: { requestId
+    // } } envelope), so a log line and an error response can be
+    // correlated on the same field name. requireAuth/requireOrgMembership/
+    // requireMembership further bind userId/organizationId onto this same
+    // request.log once known (see plugins/auth-guard.ts, lib/membership.ts).
+    requestIdLogLabel: "requestId",
     // Rate limiting (lib/rate-limit.ts) keys on request.ip — behind a real
     // reverse proxy/load balancer, that's only correct if Fastify trusts
     // X-Forwarded-For/X-Real-IP rather than resolving to the proxy's own
