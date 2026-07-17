@@ -1,6 +1,7 @@
 import { withTenantTransaction } from "@raas/db";
 import { UnrecoverableError, type Job } from "bullmq";
 
+import { env } from "../env.js";
 import { extractPdfText, ScannedDocumentError, type ExtractedDocument } from "../lib/extract-pdf.js";
 import { failDocument, isLastAttempt } from "../lib/job-failure.js";
 import { createJobLogger } from "../lib/job-logger.js";
@@ -33,6 +34,13 @@ export async function extractTextProcessor(job: Job<DocumentJobData>): Promise<E
 
     if (document.mimeType !== "application/pdf") {
       throw new UnrecoverableError(`Unsupported file type "${document.mimeType}" — only application/pdf is supported`);
+    }
+
+    // No-op outside chaos testing (see env.ts) — lets a test's kill land
+    // reliably inside the download+parse window below instead of racing
+    // a fast real PDF parse.
+    if (env.FAKE_EXTRACTION_DELAY_MS > 0) {
+      await new Promise((resolve) => setTimeout(resolve, env.FAKE_EXTRACTION_DELAY_MS));
     }
 
     const buffer = await downloadObject(document.storageKey);

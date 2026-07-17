@@ -33,6 +33,14 @@ export const env = {
   // (and manual testing) control embedding latency deterministically
   // instead of racing a real network call.
   FAKE_EMBEDDING_DELAY_MS: Number(process.env.FAKE_EMBEDDING_DELAY_MS ?? 0),
+  // Same reasoning as FAKE_EMBEDDING_DELAY_MS, for the two earlier
+  // pipeline stages: a real PDF parse (extract-text) and a real batch of
+  // Postgres upserts (chunk-text) are both too fast against a local test
+  // PDF/DB to reliably land a process kill inside them without an
+  // artificial delay. Zero (no-op) in every real deployment — these only
+  // do anything when a chaos test sets them.
+  FAKE_EXTRACTION_DELAY_MS: Number(process.env.FAKE_EXTRACTION_DELAY_MS ?? 0),
+  FAKE_CHUNK_UPSERT_DELAY_MS: Number(process.env.FAKE_CHUNK_UPSERT_DELAY_MS ?? 0),
   // BullMQ defaults (30s/30s) are right for production — a worker crash
   // shouldn't have its jobs reclaimed by a healthy sibling too eagerly.
   // The chaos test shrinks both so "kill worker, restart, watch it

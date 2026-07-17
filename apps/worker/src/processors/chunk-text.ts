@@ -2,6 +2,7 @@ import { JOB_NAMES } from "@raas/shared";
 import { withTenantTransaction } from "@raas/db";
 import { UnrecoverableError, type Job } from "bullmq";
 
+import { env } from "../env.js";
 import { chunkPages } from "../lib/chunk-text.js";
 import type { ExtractedDocument } from "../lib/extract-pdf.js";
 import { failDocument, isLastAttempt } from "../lib/job-failure.js";
@@ -84,6 +85,13 @@ export async function chunkTextProcessor(job: Job<DocumentJobData>): Promise<{ c
           },
         });
         ids.push(row.id);
+
+        // No-op outside chaos testing (see env.ts) — lets a test's kill
+        // land reliably mid-loop, inside this still-open transaction,
+        // instead of racing a fast real batch of upserts.
+        if (env.FAKE_CHUNK_UPSERT_DELAY_MS > 0) {
+          await new Promise((resolve) => setTimeout(resolve, env.FAKE_CHUNK_UPSERT_DELAY_MS));
+        }
       }
       return ids;
     });
