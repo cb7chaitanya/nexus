@@ -4,13 +4,14 @@ import type { FastifyInstance } from "fastify";
 
 import { clearSessionCookie, setSessionCookie } from "../lib/cookies.js";
 import { hashPassword, verifyPassword } from "../lib/passwords.js";
+import { authRateLimit } from "../lib/rate-limit.js";
 import { toPublicUser } from "../lib/serializers.js";
 import { createSession, destroySession, resolveSession } from "../lib/session.js";
 import { generateUniqueSlug } from "../lib/slugify.js";
 import { requireAuth, SESSION_COOKIE_NAME } from "../plugins/auth-guard.js";
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
-  app.post("/auth/signup", async (request, reply) => {
+  app.post("/auth/signup", { preHandler: authRateLimit }, async (request, reply) => {
     const input = parseOrThrow(signupSchema, request.body);
 
     const existing = await prisma.user.findUnique({ where: { email: input.email } });
@@ -62,7 +63,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/auth/login", async (request, reply) => {
+  app.post("/auth/login", { preHandler: authRateLimit }, async (request, reply) => {
     const input = parseOrThrow(loginSchema, request.body);
 
     // Same generic error for "no such user" and "wrong password" — a
