@@ -1,0 +1,11 @@
+-- apps/api's chat route creates a turn's USER and ASSISTANT Message rows
+-- inside a single transaction. Postgres's now()/CURRENT_TIMESTAMP (what
+-- Prisma's `@default(now())` compiles to) is frozen at transaction start,
+-- so both rows would get an IDENTICAL createdAt, making
+-- ORDER BY createdAt unable to distinguish which came first within that
+-- turn. clock_timestamp() returns the actual wall-clock time at each
+-- call, even inside one transaction — verified directly against this
+-- database (two clock_timestamp() reads with a real delay between them,
+-- inside one open transaction, came back different; two now() reads the
+-- same way came back identical).
+ALTER TABLE "Message" ALTER COLUMN "createdAt" SET DEFAULT clock_timestamp();

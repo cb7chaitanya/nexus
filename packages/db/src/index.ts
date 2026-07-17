@@ -11,4 +11,9 @@ export type {
   Document,
   DocumentStatus,
   DocumentChunk,
+  UsageEvent,
+  UsageEventType,
+  Conversation,
+  Message,
+  MessageRole,
 } from "@prisma/client";

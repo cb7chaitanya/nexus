@@ -34,6 +34,8 @@ model User {
   memberships       OrganizationMember[]
   sentInvites       OrganizationInvite[]
   uploadedDocuments Document[]
+  usageEvents       UsageEvent[]
+  conversations     Conversation[]
 }
 
 // ───────────────────────── Organization ─────────────────────────
@@ -58,6 +60,9 @@ model Organization {
   knowledgeBases KnowledgeBase[]
   documents      Document[]
   documentChunks DocumentChunk[]
+  usageEvents    UsageEvent[]
+  conversations  Conversation[]
+  messages       Message[]
 }
 
 enum OrgRole {
@@ -162,9 +167,10 @@ model KnowledgeBase {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  documents    Document[]
-  chunks       DocumentChunk[]
+  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  documents     Document[]
+  chunks        DocumentChunk[]
+  conversations Conversation[]
 
   @@index([organizationId])
 }
@@ -228,9 +234,10 @@ model Document {
 // worker crash-and-retry mid-chunking cannot produce a duplicate set of
 // chunks for the same document (see docs/implementation-plan.md §1.1(d)).
 //
-// No vector index (HNSW) yet — retrieval doesn't exist as a feature until
-// a later ticket, and building/tuning that index only matters once query
-// performance is being measured against real data (see decisions.md ADR-2).
+// HNSW index (cosine ops) on embedding — see migration
+// 20260717122000_add_document_chunk_hnsw_index. Prisma cannot express
+// this natively (no `@@index` syntax for access-method/opclass), so it
+// only exists as hand-written raw SQL in that migration, not here.
 model DocumentChunk {
   id              String   @id @default(uuid())
   organizationId  String
@@ -250,5 +257,103 @@ model DocumentChunk {
   document      Document      @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@unique([documentId, chunkIndex])
+  @@index([organizationId])
+}
+
+// ───────────────────────── Usage metering ─────────────────────────
+// Tenant-scoped (RLS enabled + forced, same tenant_isolation pattern as
+// DocumentChunk) and append-only — never mutate a row after creation, never
+// roll up a running counter in place under concurrent writes (see
+// docs/architecture.md's UsageEvent notes). `metadata` carries the
+// operation-specific numbers (token counts, model name, document/
+// conversation id) rather than a first-class `quantity` column — every
+// billable fact this ticket needs to record varies in shape by `type`,
+// and a single untyped `quantity Int` would either be meaningless for
+// some event types or force awkward encoding into it.
+enum UsageEventType {
+  CHAT_REQUEST
+  CHAT_PROMPT_TOKENS
+  CHAT_COMPLETION_TOKENS
+  EMBEDDING_TOKENS
+  DOCUMENT_PROCESSED
+}
+
+model UsageEvent {
+  id             String         @id @default(uuid())
+  organizationId String
+  userId         String?
+  type           UsageEventType
+  metadata       Json           @default("{}")
+  createdAt      DateTime       @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, type, createdAt])
+}
+
+// ───────────────────────── Chat memory ─────────────────────────
+// Both tenant-scoped, RLS enabled + forced. Message denormalizes
+// organizationId directly (reachable via conversationId -> Conversation,
+// but every other tenant-scoped table in this schema — Document,
+// DocumentChunk, KnowledgeBase — denormalizes organizationId directly
+// rather than relying on a join for its RLS policy, specifically so the
+// policy is a plain column comparison, not a correlated subquery through
+// another table. Message follows that same, already-established pattern.
+//
+// Access is org-level only, matching every other resource in this
+// schema (see architecture.md §7 "Document permissions" — MVP has no
+// finer-grained ACL than org membership): any member of the organization
+// can view or continue any conversation in that org, not just the one
+// who created it.
+model Conversation {
+  id              String   @id @default(uuid())
+  organizationId  String
+  userId          String
+  knowledgeBaseId String
+  title           String?
+  createdAt       DateTime @default(now())
+
+  organization  Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  knowledgeBase KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  messages      Message[]
+
+  @@index([organizationId, createdAt])
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+}
+
+model Message {
+  id             String      @id @default(uuid())
+  organizationId String
+  conversationId String
+  role           MessageRole
+  // The clean, marker-stripped text — the same text already streamed to
+  // the client, never the raw LLM output with internal [[chunk:id]]
+  // markers still in it (see @raas/core's CitationMarkerFilter). This is
+  // also what gets replayed as history into a future turn's prompt, so a
+  // future turn never sees a raw marker either.
+  content        String
+  citations      Json        @default("[]")
+  usageMetadata  Json?
+  // clock_timestamp(), not now(): apps/api's chat route creates the USER
+  // and ASSISTANT rows for one turn inside a single transaction, and
+  // Postgres's now()/CURRENT_TIMESTAMP is frozen at transaction start —
+  // both rows would get an IDENTICAL createdAt, making ORDER BY createdAt
+  // unable to distinguish which came first within that turn. Verified
+  // directly (empirically, not assumed): a value read from now() twice
+  // inside one transaction with a real delay between the two reads came
+  // back identical; clock_timestamp() read the same way correctly
+  // advanced. See migration 20260717123000_use_clock_timestamp_for_message_createdat.
+  createdAt      DateTime    @default(dbgenerated("clock_timestamp()"))
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
   @@index([organizationId])
 }
