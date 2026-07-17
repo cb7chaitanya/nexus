@@ -1,2 +1,10 @@
 export { recordUsage } from "./record-usage.js";
 export type { RecordUsageInput } from "./record-usage.js";
+export { getOrganizationDailyLimit } from "./limits.js";
+export type { UsageLimitDimension } from "./limits.js";
+export { checkDailyBudget, recordDailyBudgetUsage, checkAndConsumeDailyBudget } from "./budget-guard.js";
+export type { DailyBudgetResult } from "./budget-guard.js";
+export { withEmbeddingBudgetGuard } from "./embedding-guard.js";
+export type { EmbeddingBudgetGuardOptions } from "./embedding-guard.js";
+export { aggregateUsage, computeUsageTotals } from "./aggregate.js";
+export type { UsageBreakdownRow, UsageTotals } from "./aggregate.js";
