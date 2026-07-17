@@ -1,6 +1,6 @@
 import { JOB_NAMES, QUEUE_NAMES } from "@raas/shared";
 import { createLogger } from "@raas/logger";
-import { Worker } from "bullmq";
+import { Queue, Worker } from "bullmq";
 
 import { env } from "./env.js";
 import { redisConnection } from "./lib/redis.js";
@@ -8,6 +8,7 @@ import { chunkTextProcessor } from "./processors/chunk-text.js";
 import { embedChunksProcessor } from "./processors/embed-chunks.js";
 import { extractTextProcessor } from "./processors/extract-text.js";
 import { processDocumentProcessor } from "./processors/process-document.js";
+import { sweepStuckDocuments } from "./processors/sweep-stuck-documents.js";
 import { documentEmbeddingQueue } from "./queue/queues.js";
 
 const logger = createLogger({ service: "worker" });
@@ -46,7 +47,30 @@ async function main(): Promise<void> {
     concurrency: 2,
   });
 
-  const workers = [processingWorker, extractionWorker, embeddingWorker];
+  // Scheduled maintenance (docs/architecture.md §6.2, decisions.md R8),
+  // not part of the ingestion flow — its own queue, its own low
+  // concurrency (a sweep pass touching many orgs shouldn't compete with
+  // real ingestion work for worker capacity).
+  const documentSweepQueue = new Queue(QUEUE_NAMES.sweep, { connection: redisConnection });
+  await documentSweepQueue.add(
+    JOB_NAMES.sweepStuckDocuments,
+    {},
+    {
+      repeat: { every: env.STUCK_DOCUMENT_SWEEP_INTERVAL_MS },
+      // Fixed jobId so restarting the worker doesn't accumulate a second,
+      // third, ... repeatable schedule for the same logical job.
+      jobId: "sweep-stuck-documents-schedule",
+    },
+  );
+  const sweepWorker = new Worker(QUEUE_NAMES.sweep, () => sweepStuckDocuments(), {
+    ...sharedWorkerOptions,
+    concurrency: 1,
+  });
+  sweepWorker.on("completed", (job) => {
+    logger.info({ jobId: job.id, result: job.returnvalue as unknown }, "stuck-document sweep completed");
+  });
+
+  const workers = [processingWorker, extractionWorker, embeddingWorker, sweepWorker];
   for (const worker of workers) {
     worker.on("failed", (job, err) => {
       logger.error({ jobId: job?.id, jobName: job?.name, err }, "job failed");
@@ -57,6 +81,7 @@ async function main(): Promise<void> {
     logger.info({ signal }, "worker shutting down");
     await Promise.all(workers.map((w) => w.close()));
     await documentEmbeddingQueue.close();
+    await documentSweepQueue.close();
     await redisConnection.quit();
     process.exit(0);
   };
@@ -64,7 +89,10 @@ async function main(): Promise<void> {
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
-  logger.info("worker ready — listening on document-processing, document-extraction, document-embedding");
+  logger.info(
+    { sweepIntervalMs: env.STUCK_DOCUMENT_SWEEP_INTERVAL_MS, sweepThresholdMs: env.STUCK_DOCUMENT_THRESHOLD_MS },
+    "worker ready — listening on document-processing, document-extraction, document-embedding, document-sweep",
+  );
 }
 
 main().catch((err: unknown) => {

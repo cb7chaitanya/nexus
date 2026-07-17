@@ -34,5 +34,17 @@ export const env = {
   // recover" doesn't take 30+ real seconds per run.
   WORKER_LOCK_DURATION_MS: Number(process.env.WORKER_LOCK_DURATION_MS ?? 30_000),
   WORKER_STALLED_INTERVAL_MS: Number(process.env.WORKER_STALLED_INTERVAL_MS ?? 30_000),
+  // Stuck-document sweep (docs/architecture.md §6.2, decisions.md R8): a
+  // scheduled job finds Documents sitting in QUEUED/PROCESSING longer
+  // than STUCK_DOCUMENT_THRESHOLD_MS and fails them visibly. The sweep
+  // itself runs every STUCK_DOCUMENT_SWEEP_INTERVAL_MS, which must stay
+  // well below the threshold or a stuck document could sit unnoticed for
+  // up to threshold + interval.
+  STUCK_DOCUMENT_THRESHOLD_MS: Number(process.env.STUCK_DOCUMENT_THRESHOLD_MS ?? 30 * 60 * 1000),
+  STUCK_DOCUMENT_SWEEP_INTERVAL_MS: Number(process.env.STUCK_DOCUMENT_SWEEP_INTERVAL_MS ?? 5 * 60 * 1000),
+  // Off by default: auto-retrying a stuck document has real failure
+  // modes of its own (see sweep-stuck-documents.ts's doc comment) and
+  // should be an explicit operational choice, not a silent default.
+  STUCK_DOCUMENT_AUTO_RETRY: process.env.STUCK_DOCUMENT_AUTO_RETRY === "true",
   NODE_ENV: process.env.NODE_ENV ?? "development",
 };
