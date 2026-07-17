@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   CreateBucketCommand,
+  DeleteObjectsCommand,
   HeadBucketCommand,
   HeadObjectCommand,
   PutObjectCommand,
@@ -76,5 +77,28 @@ export async function objectExists(key: string): Promise<boolean> {
       return false;
     }
     throw err;
+  }
+}
+
+// S3's DeleteObjects accepts at most 1000 keys per call.
+const DELETE_BATCH_SIZE = 1000;
+
+/**
+ * Batch-deletes every key given, chunked into groups of 1000 (S3's own
+ * per-call limit). Used by DELETE /kb/:id's synchronous (small-KB) path —
+ * see apps/worker's cleanup-knowledge-base processor for the async
+ * (large-KB) equivalent. Deleting a key that doesn't exist is not an
+ * error (S3's own semantics), which is what makes retrying this safe.
+ */
+export async function deleteObjects(keys: string[]): Promise<void> {
+  for (let i = 0; i < keys.length; i += DELETE_BATCH_SIZE) {
+    const batch = keys.slice(i, i + DELETE_BATCH_SIZE);
+    if (batch.length === 0) continue;
+    await s3.send(
+      new DeleteObjectsCommand({
+        Bucket: env.S3_BUCKET,
+        Delete: { Objects: batch.map((key) => ({ Key: key })) },
+      }),
+    );
   }
 }

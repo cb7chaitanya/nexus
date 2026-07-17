@@ -1,4 +1,4 @@
-import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectsCommand, GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 
 import { env } from "../env.js";
 
@@ -24,4 +24,31 @@ export async function downloadObject(key: string): Promise<Buffer> {
     throw new Error(`downloadObject: no body returned for key ${key}`);
   }
   return Buffer.from(bytes);
+}
+
+// S3's DeleteObjects accepts at most 1000 keys per call.
+const DELETE_BATCH_SIZE = 1000;
+
+/**
+ * Batch-deletes every key given, chunked into groups of 1000. Used by the
+ * cleanup-knowledge-base processor — mirrors apps/api's own
+ * lib/storage.ts's deleteObjects exactly (each process owns its own S3
+ * client, same convention as this repo's Redis connections, so the
+ * function is duplicated rather than shared). Deleting a key that
+ * doesn't exist is not an error (S3's own semantics), which is what
+ * makes retrying a failed cleanup job safe: a retry re-lists every
+ * document and re-attempts deleting all of them, including ones a prior
+ * attempt already removed.
+ */
+export async function deleteObjects(keys: string[]): Promise<void> {
+  for (let i = 0; i < keys.length; i += DELETE_BATCH_SIZE) {
+    const batch = keys.slice(i, i + DELETE_BATCH_SIZE);
+    if (batch.length === 0) continue;
+    await s3.send(
+      new DeleteObjectsCommand({
+        Bucket: env.S3_BUCKET,
+        Delete: { Objects: batch.map((key) => ({ Key: key })) },
+      }),
+    );
+  }
 }

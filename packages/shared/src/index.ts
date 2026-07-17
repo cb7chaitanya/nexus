@@ -13,19 +13,39 @@ export {
   acceptInviteSchema,
   changeMemberRoleSchema,
   createOrganizationSchema,
+  createWorkspaceSchema,
   inviteMemberSchema,
   listMembersQuerySchema,
+  listWorkspacesQuerySchema,
   orgRoleSchema,
+  updateOrganizationSchema,
+  updateWorkspaceSchema,
 } from "./schemas/organizations.js";
 export type {
   AcceptInviteInput,
   ChangeMemberRoleInput,
   CreateOrganizationInput,
+  CreateWorkspaceInput,
   InviteMemberInput,
   ListMembersQuery,
+  ListWorkspacesQuery,
+  UpdateOrganizationInput,
+  UpdateWorkspaceInput,
 } from "./schemas/organizations.js";
-export { createKnowledgeBaseSchema, listKnowledgeBasesQuerySchema } from "./schemas/knowledge-bases.js";
-export type { CreateKnowledgeBaseInput, ListKnowledgeBasesQuery } from "./schemas/knowledge-bases.js";
+export {
+  createKnowledgeBaseSchema,
+  knowledgeBaseIdQuerySchema,
+  listKnowledgeBasesQuerySchema,
+  updateKnowledgeBaseSchema,
+} from "./schemas/knowledge-bases.js";
+export type {
+  CreateKnowledgeBaseInput,
+  KnowledgeBaseIdQuery,
+  ListKnowledgeBasesQuery,
+  UpdateKnowledgeBaseInput,
+} from "./schemas/knowledge-bases.js";
+export { createApiKeySchema, listApiKeysQuerySchema } from "./schemas/api-keys.js";
+export type { CreateApiKeyInput, ListApiKeysQuery } from "./schemas/api-keys.js";
 export { completeDocumentSchema, listDocumentsQuerySchema, presignDocumentSchema } from "./schemas/documents.js";
 export type { CompleteDocumentInput, ListDocumentsQuery, PresignDocumentInput } from "./schemas/documents.js";
 export { chatSchema } from "./schemas/chat.js";

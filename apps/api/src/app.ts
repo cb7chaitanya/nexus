@@ -10,6 +10,7 @@ import { env } from "./env.js";
 import { GLOBAL_BODY_LIMIT_BYTES } from "./lib/body-limits.js";
 import { ensureBucketExists } from "./lib/storage.js";
 import { registerErrorHandler } from "./plugins/error-handler.js";
+import { apiKeyRoutes } from "./routes/api-keys.js";
 import { authRoutes } from "./routes/auth.js";
 import { chatRoutes } from "./routes/chat.js";
 import { conversationRoutes } from "./routes/conversations.js";
@@ -18,6 +19,7 @@ import { healthRoutes } from "./routes/health.js";
 import { knowledgeBaseRoutes } from "./routes/knowledge-bases.js";
 import { organizationRoutes } from "./routes/organizations.js";
 import { usageRoutes } from "./routes/usage.js";
+import { workspaceRoutes } from "./routes/workspaces.js";
 
 /**
  * Builds (but does not start listening on) a fully wired Fastify instance.
@@ -123,6 +125,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(healthRoutes);
   await app.register(authRoutes);
   await app.register(organizationRoutes);
+  await app.register(workspaceRoutes);
+  await app.register(apiKeyRoutes);
   await app.register(knowledgeBaseRoutes);
   await app.register(documentRoutes);
   await app.register(chatRoutes);

@@ -74,5 +74,12 @@ export const env = {
   // How many prior turns (user+assistant pairs) are loaded as
   // conversation history and replayed into the prompt.
   CHAT_HISTORY_MESSAGE_LIMIT: Number(process.env.CHAT_HISTORY_MESSAGE_LIMIT ?? 20),
+  // DELETE /kb/:id: a KB with more chunks than this gets an async
+  // cleanup job (see lib/kb-cleanup.ts) instead of an inline
+  // cascade-delete — cascading tens of thousands of rows plus their S3
+  // objects inside one HTTP request risks a request timeout and a long-
+  // held transaction. Below the threshold, deletion happens synchronously
+  // and returns 204 immediately.
+  KB_DELETION_ASYNC_CHUNK_THRESHOLD: Number(process.env.KB_DELETION_ASYNC_CHUNK_THRESHOLD ?? 5000),
   NODE_ENV: process.env.NODE_ENV ?? "development",
 };

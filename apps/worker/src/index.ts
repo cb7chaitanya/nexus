@@ -6,6 +6,7 @@ import { env } from "./env.js";
 import { createJobLogger } from "./lib/job-logger.js";
 import { redisConnection } from "./lib/redis.js";
 import { chunkTextProcessor } from "./processors/chunk-text.js";
+import { cleanupKnowledgeBaseProcessor } from "./processors/cleanup-knowledge-base.js";
 import { embedChunksProcessor } from "./processors/embed-chunks.js";
 import { extractTextProcessor } from "./processors/extract-text.js";
 import { processDocumentProcessor } from "./processors/process-document.js";
@@ -71,7 +72,16 @@ async function main(): Promise<void> {
     createJobLogger({ jobId: job.id }).info({ result: job.returnvalue as unknown }, "stuck-document sweep completed");
   });
 
-  const workers = [processingWorker, extractionWorker, embeddingWorker, sweepWorker];
+  // DELETE /kb/:id's async path (apps/api/src/lib/kb-cleanup.ts) — its
+  // own queue/low concurrency for the same reason sweep has one: a large
+  // KB's S3 cleanup is many individual network calls and shouldn't
+  // compete with real ingestion work for worker capacity.
+  const kbCleanupWorker = new Worker(QUEUE_NAMES.kbCleanup, cleanupKnowledgeBaseProcessor, {
+    ...sharedWorkerOptions,
+    concurrency: 2,
+  });
+
+  const workers = [processingWorker, extractionWorker, embeddingWorker, sweepWorker, kbCleanupWorker];
   for (const worker of workers) {
     worker.on("failed", (job, err) => {
       // job.data's shape varies by queue (extraction/chunking/embedding
@@ -102,7 +112,7 @@ async function main(): Promise<void> {
 
   logger.info(
     { sweepIntervalMs: env.STUCK_DOCUMENT_SWEEP_INTERVAL_MS, sweepThresholdMs: env.STUCK_DOCUMENT_THRESHOLD_MS },
-    "worker ready — listening on document-processing, document-extraction, document-embedding, document-sweep",
+    "worker ready — listening on document-processing, document-extraction, document-embedding, document-sweep, kb-cleanup",
   );
 }
 

@@ -5,7 +5,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { prisma } from "@raas/db";
+import { prisma, withTenantTransaction } from "@raas/db";
 import { PLATFORM_EMBEDDING_DIM } from "@raas/shared";
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -394,6 +394,227 @@ describe("knowledge base routes", () => {
         },
       });
       expect(responseB.statusCode).toBe(201);
+    });
+  });
+
+  describe("GET/PATCH/DELETE /kb/:id", () => {
+    async function createKb(cookie: string, orgId: string, name: string): Promise<string> {
+      const response = await app.inject({
+        method: "POST",
+        url: "/kb",
+        cookies: { [SESSION_COOKIE_NAME]: cookie },
+        payload: {
+          organizationId: orgId,
+          name,
+          embeddingProvider: "openai",
+          embeddingModel: "text-embedding-3-small",
+          embeddingDim: PLATFORM_EMBEDDING_DIM,
+        },
+      });
+      return response.json().id;
+    }
+
+    /** Invites and accepts a MEMBER-role user into ownerCookie's org —
+     * used to test that PATCH/DELETE require ADMIN+, not just membership. */
+    async function inviteMember(email: string): Promise<string> {
+      const invite = await app.inject({
+        method: "POST",
+        url: `/organizations/${organizationId}/invites`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+        payload: { email, role: "MEMBER" },
+      });
+      const { token } = invite.json();
+
+      const signedUp = await signup(app, email, password, `Member Personal Org ${randomUUID().slice(0, 8)}`);
+      await app.inject({
+        method: "POST",
+        url: `/invites/${token}/accept`,
+        cookies: { [SESSION_COOKIE_NAME]: signedUp.sessionCookie },
+      });
+      return signedUp.sessionCookie;
+    }
+
+    it("returns KB details with document/chunk/storage stats", async () => {
+      const kbId = await createKb(ownerCookie, organizationId, "Detail KB");
+
+      const response = await app.inject({
+        method: "GET",
+        url: `/kb/${kbId}?organizationId=${organizationId}`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body.id).toBe(kbId);
+      expect(body.stats).toEqual({ documentCount: 0, chunkCount: 0, storageBytes: 0 });
+    });
+
+    it("returns 404 for a KB belonging to another organization (tenant isolation)", async () => {
+      const outsiderOrg = await signup(app, `kb-detail-outsider-${suffix}@example.com`, password, `KB Detail Outsider ${suffix}`);
+      const kbId = await createKb(ownerCookie, organizationId, "Isolated KB");
+
+      const response = await app.inject({
+        method: "GET",
+        url: `/kb/${kbId}?organizationId=${outsiderOrg.organizationId}`,
+        cookies: { [SESSION_COOKIE_NAME]: outsiderOrg.sessionCookie },
+      });
+
+      expect(response.statusCode).toBe(404);
+    });
+
+    it("returns 404 for a KB id that doesn't exist", async () => {
+      const response = await app.inject({
+        method: "GET",
+        url: `/kb/${randomUUID()}?organizationId=${organizationId}`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      });
+      expect(response.statusCode).toBe(404);
+    });
+
+    it("updates name and description via PATCH", async () => {
+      const kbId = await createKb(ownerCookie, organizationId, "Patchable KB");
+
+      const response = await app.inject({
+        method: "PATCH",
+        url: `/kb/${kbId}`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+        payload: { organizationId, name: "Renamed KB", description: "a description" },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ name: "Renamed KB", description: "a description" });
+    });
+
+    it("rejects PATCH from a MEMBER — requires ADMIN or higher", async () => {
+      const kbId = await createKb(ownerCookie, organizationId, "Role Gated KB");
+      const memberCookie = await inviteMember(`kb-patch-member-${suffix}@example.com`);
+
+      const response = await app.inject({
+        method: "PATCH",
+        url: `/kb/${kbId}`,
+        cookies: { [SESSION_COOKIE_NAME]: memberCookie },
+        payload: { organizationId, name: "Should Not Work" },
+      });
+
+      expect(response.statusCode).toBe(403);
+    });
+
+    it("embeddingProvider/embeddingModel/embeddingDim are silently ignored by PATCH (immutable)", async () => {
+      const kbId = await createKb(ownerCookie, organizationId, "Immutable Fields KB");
+
+      const response = await app.inject({
+        method: "PATCH",
+        url: `/kb/${kbId}`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+        // updateKnowledgeBaseSchema has no embeddingProvider field at all —
+        // zod strips unrecognized keys by default (same as every other
+        // schema in this codebase), so this parses as a no-op update
+        // rather than a validation error; the real assertion is that the
+        // stored value never changes.
+        payload: { organizationId, embeddingProvider: "cohere" },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().embeddingProvider).toBe("openai");
+    });
+
+    it("small KB: DELETE removes it synchronously and returns 204", async () => {
+      const kbId = await createKb(ownerCookie, organizationId, "Small Delete KB");
+
+      const response = await app.inject({
+        method: "DELETE",
+        url: `/kb/${kbId}?organizationId=${organizationId}`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      });
+      expect(response.statusCode).toBe(204);
+
+      const stored = await withTenantTransaction(organizationId, (tx) => tx.knowledgeBase.findUnique({ where: { id: kbId } }));
+      expect(stored).toBeNull();
+
+      // Gone from the list too.
+      const listResponse = await app.inject({
+        method: "GET",
+        url: `/kb?organizationId=${organizationId}`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      });
+      expect(listResponse.json().data.some((kb: { id: string }) => kb.id === kbId)).toBe(false);
+    });
+
+    it("rejects DELETE from a MEMBER — requires ADMIN or higher", async () => {
+      const kbId = await createKb(ownerCookie, organizationId, "Delete Role Gated KB");
+      const memberCookie = await inviteMember(`kb-delete-member-${suffix}@example.com`);
+
+      const response = await app.inject({
+        method: "DELETE",
+        url: `/kb/${kbId}?organizationId=${organizationId}`,
+        cookies: { [SESSION_COOKIE_NAME]: memberCookie },
+      });
+
+      expect(response.statusCode).toBe(403);
+    });
+
+    it("returns 404 deleting a KB id that doesn't exist", async () => {
+      const response = await app.inject({
+        method: "DELETE",
+        url: `/kb/${randomUUID()}?organizationId=${organizationId}`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      });
+      expect(response.statusCode).toBe(404);
+    });
+
+    it("large KB (chunk count over threshold): DELETE marks it DELETING, enqueues cleanup, returns 202", async () => {
+      const kbId = await createKb(ownerCookie, organizationId, "Large Delete KB");
+
+      // Directly seed chunk rows past KB_DELETION_ASYNC_CHUNK_THRESHOLD
+      // (default 5000) — real ingestion to reach that count would be far
+      // too slow for a test; this exercises DELETE's own threshold
+      // decision, not the ingestion pipeline (already covered elsewhere).
+      const document = await withTenantTransaction(organizationId, (tx) =>
+        tx.document.create({
+          data: {
+            organizationId,
+            knowledgeBaseId: kbId,
+            fileName: "big.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 1,
+            storageKey: `${organizationId}/${kbId}/${randomUUID()}`,
+            status: "READY",
+          },
+        }),
+      );
+      const chunkRows = Array.from({ length: 5001 }, (_, i) => ({
+        organizationId,
+        knowledgeBaseId: kbId,
+        documentId: document.id,
+        chunkIndex: i,
+        content: "x",
+        tokenCount: 1,
+        charStart: 0,
+        charEnd: 1,
+      }));
+      await withTenantTransaction(organizationId, (tx) => tx.documentChunk.createMany({ data: chunkRows }));
+
+      const response = await app.inject({
+        method: "DELETE",
+        url: `/kb/${kbId}?organizationId=${organizationId}`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      });
+
+      expect(response.statusCode).toBe(202);
+      expect(response.json()).toEqual({ id: kbId, status: "DELETING" });
+
+      // Immediately invisible to reads, even though the row (and its
+      // chunks) still exist until the async worker job finishes — DELETE's
+      // contract is "gone now," not "will eventually be gone."
+      const getResponse = await app.inject({
+        method: "GET",
+        url: `/kb/${kbId}?organizationId=${organizationId}`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      });
+      expect(getResponse.statusCode).toBe(404);
+
+      const stillInDb = await withTenantTransaction(organizationId, (tx) => tx.knowledgeBase.findUnique({ where: { id: kbId } }));
+      expect(stillInDb?.status).toBe("DELETING");
     });
   });
 });
