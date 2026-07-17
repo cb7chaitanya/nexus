@@ -33,6 +33,7 @@ model User {
 
   memberships       OrganizationMember[]
   sentInvites       OrganizationInvite[]
+  createdApiKeys    ApiKey[]
   uploadedDocuments Document[]
   usageEvents       UsageEvent[]
   conversations     Conversation[]
@@ -57,6 +58,7 @@ model Organization {
   members        OrganizationMember[]
   workspaces     Workspace[]
   invites        OrganizationInvite[]
+  apiKeys        ApiKey[]
   knowledgeBases KnowledgeBase[]
   documents      Document[]
   documentChunks DocumentChunk[]
@@ -142,6 +144,45 @@ model OrganizationInvite {
   @@index([organizationId])
 }
 
+// ───────────────────────── API keys ─────────────────────────
+// Deliberately NOT RLS-scoped, same reasoning as OrganizationInvite above
+// (this is the ApiKey model that comment refers to): a future public,
+// API-key-authenticated request path has to resolve organizationId FROM
+// the key itself, before any tenant context exists to scope a query
+// by — the same chicken-and-egg problem invite acceptance has. The
+// session-authenticated management routes this ticket adds (POST/GET
+// /organizations/:id/api-keys, DELETE .../api-keys/:keyId) already have
+// organizationId from an authenticated, membership-checked session, so
+// every query they issue filters by it explicitly in application code —
+// there is no RLS backstop on this table, by design, matching
+// OrganizationInvite exactly.
+//
+// hashedKey is SHA-256 of the raw key, not argon2 — same reasoning as
+// hashInviteToken (apps/api/src/lib/invites.ts): the raw key is
+// high-entropy and machine-generated, never user-chosen, so it doesn't
+// need argon2's computational hardening against brute force the way a
+// human password does. The raw key is shown exactly once at creation and
+// never stored; `prefix` (a short, non-secret leading slice of the raw
+// key) is what the list endpoint shows afterward so a key can be
+// identified without ever re-exposing the secret.
+model ApiKey {
+  id             String    @id @default(uuid())
+  organizationId String
+  name           String
+  hashedKey      String    @unique
+  prefix         String
+  createdBy      String?
+  lastUsedAt     DateTime?
+  expiresAt      DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdByUser User?        @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+}
+
 // ───────────────────────── Knowledge base / documents ─────────────────────────
 // Both tenant-scoped: RLS enabled + forced, same tenant_isolation pattern
 // as Workspace (missing_ok deliberately omitted — a query reaching either
@@ -158,15 +199,33 @@ model OrganizationInvite {
 // table, so mixing embedding models within one KB is a real engineering
 // problem the platform doesn't support yet, not just a validation nicety.
 
+// ACTIVE is the only status a KB is ever created in. DELETING is set by
+// DELETE /kb/:id when the KB has more chunks than
+// KB_DELETION_ASYNC_CHUNK_THRESHOLD (apps/api/src/env.ts) — deletion for a
+// KB that large is handed off to an async worker job (see
+// apps/api/src/lib/kb-cleanup.ts, apps/worker's
+// cleanup-knowledge-base processor) rather than cascade-deleting
+// potentially tens of thousands of rows and S3 objects inside one HTTP
+// request. A KB in DELETING is treated as already gone by every read path
+// (GET /kb, GET /kb/:id) even though its rows still exist until the
+// worker finishes — DELETE's contract is "this is gone now," not "this
+// will eventually be gone."
+enum KnowledgeBaseStatus {
+  ACTIVE
+  DELETING
+}
+
 model KnowledgeBase {
-  id                String   @id @default(uuid())
+  id                String              @id @default(uuid())
   organizationId    String
   name              String
+  description       String?
   embeddingProvider String // "openai" | "cohere" | ...
   embeddingModel    String // "text-embedding-3-small"
   embeddingDim      Int
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  status            KnowledgeBaseStatus @default(ACTIVE)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
 
   organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   documents     Document[]

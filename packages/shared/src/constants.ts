@@ -23,6 +23,11 @@ export const QUEUE_NAMES = {
   // Documents stuck in QUEUED/PROCESSING past a threshold and fails them
   // visibly (docs/architecture.md §6.2, docs/decisions.md R8).
   sweep: "document-sweep",
+  // DELETE /kb/:id async path — a KB with more chunks than
+  // KB_DELETION_ASYNC_CHUNK_THRESHOLD gets its S3 objects and rows torn
+  // down by a worker job instead of inline in the request (see
+  // apps/api/src/lib/kb-cleanup.ts).
+  kbCleanup: "kb-cleanup",
 } as const;
 
 export const JOB_NAMES = {
@@ -31,4 +36,5 @@ export const JOB_NAMES = {
   chunkText: "chunk-text",
   embedChunks: "embed-chunks",
   sweepStuckDocuments: "sweep-stuck-documents",
+  cleanupKnowledgeBase: "cleanup-knowledge-base",
 } as const;
