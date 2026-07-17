@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { emailSchema, slugSchema } from "./auth.js";
+import { cursorPaginationSchema } from "./pagination.js";
 
 export const orgRoleSchema = z.enum(["OWNER", "ADMIN", "MEMBER"]);
 
@@ -30,3 +31,6 @@ export const changeMemberRoleSchema = z.object({
   role: orgRoleSchema,
 });
 export type ChangeMemberRoleInput = z.infer<typeof changeMemberRoleSchema>;
+
+export const listMembersQuerySchema = cursorPaginationSchema;
+export type ListMembersQuery = z.infer<typeof listMembersQuerySchema>;

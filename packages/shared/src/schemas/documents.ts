@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { MAX_UPLOAD_SIZE_BYTES } from "../constants.js";
+import { cursorPaginationSchema } from "./pagination.js";
 
 export const presignDocumentSchema = z.object({
   organizationId: z.string().uuid(),
@@ -14,3 +15,10 @@ export const completeDocumentSchema = z.object({
   organizationId: z.string().uuid(),
 });
 export type CompleteDocumentInput = z.infer<typeof completeDocumentSchema>;
+
+export const listDocumentsQuerySchema = z
+  .object({
+    organizationId: z.string().uuid(),
+  })
+  .merge(cursorPaginationSchema);
+export type ListDocumentsQuery = z.infer<typeof listDocumentsQuerySchema>;

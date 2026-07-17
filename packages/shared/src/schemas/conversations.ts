@@ -1,14 +1,6 @@
 import { z } from "zod";
 
-// Shared cursor-pagination shape: cursor is the id of the last item seen
-// on the previous page (opaque to the client beyond that), limit is
-// capped well below "unbounded" — this is the fix for the pagination gap
-// flagged against GET /kb and GET /organizations/:id/members, applied to
-// the two new list endpoints from the start rather than retrofitted.
-const cursorPaginationSchema = z.object({
-  cursor: z.string().uuid().optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(20),
-});
+import { cursorPaginationSchema } from "./pagination.js";
 
 export const listConversationsQuerySchema = z
   .object({

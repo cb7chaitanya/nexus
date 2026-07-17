@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { PLATFORM_EMBEDDING_DIM } from "../constants.js";
+import { cursorPaginationSchema } from "./pagination.js";
 
 export const createKnowledgeBaseSchema = z.object({
   organizationId: z.string().uuid(),
@@ -14,7 +15,9 @@ export const createKnowledgeBaseSchema = z.object({
 });
 export type CreateKnowledgeBaseInput = z.infer<typeof createKnowledgeBaseSchema>;
 
-export const listKnowledgeBasesQuerySchema = z.object({
-  organizationId: z.string().uuid(),
-});
+export const listKnowledgeBasesQuerySchema = z
+  .object({
+    organizationId: z.string().uuid(),
+  })
+  .merge(cursorPaginationSchema);
 export type ListKnowledgeBasesQuery = z.infer<typeof listKnowledgeBasesQuerySchema>;
