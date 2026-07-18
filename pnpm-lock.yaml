@@ -65,6 +65,12 @@ importers:
       '@raas/logger':
         specifier: workspace:*
         version: link:../../packages/logger
+      '@raas/metrics':
+        specifier: workspace:*
+        version: link:../../packages/metrics
+      '@raas/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       '@raas/providers':
         specifier: workspace:*
         version: link:../../packages/providers
@@ -119,7 +125,7 @@ importers:
         version: link:../../packages/shared
       next:
         specifier: ^15.0.0
-        version: 15.5.20(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+        version: 15.5.20(@opentelemetry/api@1.9.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -154,6 +160,12 @@ importers:
       '@raas/logger':
         specifier: workspace:*
         version: link:../../packages/logger
+      '@raas/metrics':
+        specifier: workspace:*
+        version: link:../../packages/metrics
+      '@raas/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       '@raas/providers':
         specifier: workspace:*
         version: link:../../packages/providers
@@ -304,6 +316,34 @@ importers:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@20.19.43)
 
+  packages/metrics:
+    dependencies:
+      prom-client:
+        specifier: ^15.1.3
+        version: 15.1.3
+    devDependencies:
+      '@raas/config':
+        specifier: workspace:*
+        version: link:../config
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.19.43)
+
+  packages/observability:
+    devDependencies:
+      '@raas/config':
+        specifier: workspace:*
+        version: link:../config
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.19.43)
+
   packages/providers:
     devDependencies:
       '@raas/config':
@@ -355,6 +395,9 @@ importers:
       '@raas/db':
         specifier: workspace:*
         version: link:../db
+      '@raas/metrics':
+        specifier: workspace:*
+        version: link:../metrics
       '@raas/providers':
         specifier: workspace:*
         version: link:../providers
@@ -1235,6 +1278,10 @@ packages:
     resolution: {integrity: sha512-nn5ozdjYQpUCZlWGuxcJY/KpxkWQs4DcbMCmKojjyrYDEAGy4Ce19NN4v5MduafTwJlbKc99UA8YhSVqq9yPZA==}
     engines: {node: '>=12.4.0'}
 
+  '@opentelemetry/api@1.9.1':
+    resolution: {integrity: sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q==}
+    engines: {node: '>=8.0.0'}
+
   '@phc/format@1.0.0':
     resolution: {integrity: sha512-m7X9U6BG2+J+R1lSOdCiITLLrxm+cWlNI3HUFA92oLO77ObGNzaKdh8pMLqdZcshtkKuV84olNNXDfMc4FezBQ==}
     engines: {node: '>=10'}
@@ -1795,6 +1842,9 @@ packages:
 
   base64-js@1.5.1:
     resolution: {integrity: sha512-AKpaYlHn8t4SVbOHCy+b5+KKgvR4vrsD8vbvrbiQJps7fKDTkjkDry6ji0rUJjC0kzbNePLwzxq8iypo41qeWA==}
+
+  bintrees@1.0.2:
+    resolution: {integrity: sha512-VOMgTMwjAaUG580SXn3LacVgjurrbMme7ZZNYGSSV7mmtY6QQRh0Eg3pwIcntQ77DErK1L0NxkbetjcoXzVwKw==}
 
   bowser@2.14.1:
     resolution: {integrity: sha512-tzPjzCxygAKWFOJP011oxFHs57HzIhOEracIgAePE4pqB3LikALKnSzUyU4MGs9/iCEUuHlAJTjTc5M+u7YEGg==}
@@ -2813,6 +2863,10 @@ packages:
     resolution: {integrity: sha512-cdGef/drWFoydD1JsMzuFf8100nZl+GT+yacc2bEced5f9Rjk4z+WtFUTBu9PhOi9j/jfmBPu0mMEY4wIdAF8A==}
     engines: {node: '>= 0.6.0'}
 
+  prom-client@15.1.3:
+    resolution: {integrity: sha512-6ZiOBfCywsD4k1BN9IX0uZhF+tJkV8q8llP64G5Hajs4JOeVLPCwpPVcpXy3BwYiUGgyJzsJJQeOIv7+hDSq8g==}
+    engines: {node: ^16 || ^18 || >=20}
+
   prop-types@15.8.1:
     resolution: {integrity: sha512-oj87CgZICdulUohogVAR7AjlC0327U4el4L6eAvOqCeudMDVU0NThNaV+b9Df4dXgSP1gXMTnPdhfe/2qDH5cg==}
 
@@ -3068,6 +3122,9 @@ packages:
   supports-preserve-symlinks-flag@1.0.0:
     resolution: {integrity: sha512-ot0WnXS9fgdkgIcePe6RHNk1WA8+muPa6cSjeR3V8K27q9BB1rTE3R1p7Hv0z1ZyAc8s6Vvv8DIyWf681MAt0w==}
     engines: {node: '>= 0.4'}
+
+  tdigest@0.1.2:
+    resolution: {integrity: sha512-+G0LLgjjo9BZX2MfdvPfH+MKLCrxlXSYec5DaPYP1fe6Iyhf0/fSmJ0bFiZ1F8BT6cGXl2LpltQptzjXKWEkKA==}
 
   thread-stream@3.2.0:
     resolution: {integrity: sha512-zLBvqpwr4Esa0kRjcrzGU6zL25lePWaCLMx0RQFrmteozIfeNdaMLpG5U7PeHzvlFkAWaRKA9/KVW4F60iB+qw==}
@@ -4099,6 +4156,8 @@ snapshots:
 
   '@nolyfill/is-core-module@1.0.39': {}
 
+  '@opentelemetry/api@1.9.1': {}
+
   '@phc/format@1.0.0': {}
 
   '@pinojs/redact@0.4.0': {}
@@ -4626,6 +4685,8 @@ snapshots:
   balanced-match@4.0.4: {}
 
   base64-js@1.5.1: {}
+
+  bintrees@1.0.2: {}
 
   bowser@2.14.1: {}
 
@@ -5658,7 +5719,7 @@ snapshots:
 
   natural-compare@1.4.0: {}
 
-  next@15.5.20(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
+  next@15.5.20(@opentelemetry/api@1.9.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
     dependencies:
       '@next/env': 15.5.20
       '@swc/helpers': 0.5.15
@@ -5676,6 +5737,7 @@ snapshots:
       '@next/swc-linux-x64-musl': 15.5.20
       '@next/swc-win32-arm64-msvc': 15.5.20
       '@next/swc-win32-x64-msvc': 15.5.20
+      '@opentelemetry/api': 1.9.1
       sharp: 0.34.5
     transitivePeerDependencies:
       - '@babel/core'
@@ -5867,6 +5929,11 @@ snapshots:
   process-warning@5.0.0: {}
 
   process@0.11.10: {}
+
+  prom-client@15.1.3:
+    dependencies:
+      '@opentelemetry/api': 1.9.1
+      tdigest: 0.1.2
 
   prop-types@15.8.1:
     dependencies:
@@ -6210,6 +6277,10 @@ snapshots:
       has-flag: 4.0.0
 
   supports-preserve-symlinks-flag@1.0.0: {}
+
+  tdigest@0.1.2:
+    dependencies:
+      bintrees: 1.0.2
 
   thread-stream@3.2.0:
     dependencies:
