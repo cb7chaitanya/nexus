@@ -6,6 +6,7 @@
 import { randomUUID } from "node:crypto";
 
 import { prisma, withTenantTransaction } from "@raas/db";
+import { embeddingTokensTotal, llmTokensTotal } from "@raas/metrics";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { recordUsage } from "./record-usage.js";
@@ -90,5 +91,46 @@ describe("recordUsage", () => {
 
     const events = await withTenantTransaction(orgA.id, (tx) => tx.usageEvent.findMany());
     expect(events.some((e) => (e.metadata as Record<string, unknown>).marker === marker)).toBe(true);
+  });
+
+  it("increments the embedding-tokens metric with the token count and model from metadata", async () => {
+    embeddingTokensTotal.reset();
+
+    await recordUsage({
+      organizationId: orgA.id,
+      type: "EMBEDDING_TOKENS",
+      metadata: { model: "text-embedding-3-small", documentId: "doc-metric", tokenCount: 321 },
+    });
+
+    const metric = await embeddingTokensTotal.get();
+    expect(metric.values).toEqual([expect.objectContaining({ labels: { model: "text-embedding-3-small" }, value: 321 })]);
+  });
+
+  it("increments the LLM-tokens metric separately for prompt and completion kinds", async () => {
+    llmTokensTotal.reset();
+
+    await withTenantTransaction(orgA.id, async (tx) => {
+      await recordUsage({ organizationId: orgA.id, type: "CHAT_PROMPT_TOKENS", metadata: { model: "gpt-4o-mini", tokenCount: 100 } }, tx);
+      await recordUsage({ organizationId: orgA.id, type: "CHAT_COMPLETION_TOKENS", metadata: { model: "gpt-4o-mini", tokenCount: 40 } }, tx);
+    });
+
+    const metric = await llmTokensTotal.get();
+    expect(metric.values).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ labels: { model: "gpt-4o-mini", kind: "prompt" }, value: 100 }),
+        expect.objectContaining({ labels: { model: "gpt-4o-mini", kind: "completion" }, value: 40 }),
+      ]),
+    );
+  });
+
+  it("does not touch either token metric for a CHAT_REQUEST or DOCUMENT_PROCESSED event (no token dimension)", async () => {
+    embeddingTokensTotal.reset();
+    llmTokensTotal.reset();
+
+    await recordUsage({ organizationId: orgA.id, type: "CHAT_REQUEST", metadata: { conversationId: randomUUID() } });
+    await recordUsage({ organizationId: orgA.id, type: "DOCUMENT_PROCESSED", metadata: { documentId: "doc-x" } });
+
+    expect((await embeddingTokensTotal.get()).values).toHaveLength(0);
+    expect((await llmTokensTotal.get()).values).toHaveLength(0);
   });
 });
