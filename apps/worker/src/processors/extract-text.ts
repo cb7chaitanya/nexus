@@ -15,8 +15,8 @@ import type { DocumentJobData } from "./types.js";
  * write is needed to hand extracted text to the next stage.
  */
 export async function extractTextProcessor(job: Job<DocumentJobData>): Promise<ExtractedDocument> {
-  const { organizationId, documentId, requestId } = job.data;
-  const log = createJobLogger({ jobId: job.id, organizationId, documentId, requestId });
+  const { organizationId, documentId, knowledgeBaseId, requestId } = job.data;
+  const log = createJobLogger({ jobId: job.id, organizationId, documentId, requestId, knowledgeBaseId });
 
   try {
     const document = await withTenantTransaction(organizationId, async (tx) => {

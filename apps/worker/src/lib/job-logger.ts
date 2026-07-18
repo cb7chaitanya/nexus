@@ -8,6 +8,7 @@ export interface JobLogContext {
   /** See DocumentJobData.requestId — carried through so a job's logs can
    * be correlated back to the HTTP request that enqueued it. */
   requestId?: string;
+  knowledgeBaseId?: string;
 }
 
 /**

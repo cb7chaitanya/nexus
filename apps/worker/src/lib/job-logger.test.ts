@@ -31,6 +31,25 @@ describe("createJobLogger", () => {
     });
   });
 
+  it("binds knowledgeBaseId alongside every other job-context field", () => {
+    const log = createJobLogger({
+      jobId: "job-123",
+      organizationId: "org-456",
+      documentId: "doc-789",
+      requestId: "req-abc",
+      knowledgeBaseId: "kb-xyz",
+    });
+
+    expect(log.bindings()).toEqual({
+      service: "worker",
+      jobId: "job-123",
+      organizationId: "org-456",
+      documentId: "doc-789",
+      requestId: "req-abc",
+      knowledgeBaseId: "kb-xyz",
+    });
+  });
+
   it("omits fields that weren't provided rather than binding them as undefined", () => {
     // Sweep's job-level logger only knows jobId up front — organizationId
     // and documentId are added per document via .child() inside the loop
@@ -55,8 +74,8 @@ describe("createJobLogger", () => {
   it("only ever binds the documented job-context fields — no room for a content/text field to slip in", () => {
     const log = createJobLogger({ jobId: "job-1", organizationId: "org-1", documentId: "doc-1" });
 
-    const log2 = createJobLogger({ jobId: "job-1", organizationId: "org-1", documentId: "doc-1", requestId: "req-1" });
-    expect(Object.keys(log2.bindings()).sort()).toEqual(["documentId", "jobId", "organizationId", "requestId", "service"]);
+    const log2 = createJobLogger({ jobId: "job-1", organizationId: "org-1", documentId: "doc-1", requestId: "req-1", knowledgeBaseId: "kb-1" });
+    expect(Object.keys(log2.bindings()).sort()).toEqual(["documentId", "jobId", "knowledgeBaseId", "organizationId", "requestId", "service"]);
     expect(Object.keys(log.bindings()).sort()).toEqual(["documentId", "jobId", "organizationId", "service"]);
   });
 });

@@ -42,7 +42,7 @@ function batch<T>(items: T[], size: number): T[][] {
  */
 export async function chunkTextProcessor(job: Job<DocumentJobData>): Promise<{ chunkCount: number }> {
   const { organizationId, documentId, knowledgeBaseId, requestId } = job.data;
-  const log = createJobLogger({ jobId: job.id, organizationId, documentId, requestId });
+  const log = createJobLogger({ jobId: job.id, organizationId, documentId, requestId, knowledgeBaseId });
 
   try {
     if (!job.parent) {

@@ -84,8 +84,8 @@ const defaultDeps: EmbedChunksDeps = {
  * loser's conditional UPDATE affects zero rows and bills nothing.
  */
 export async function processEmbedChunksJob(job: Job<EmbedChunksJobData>, deps: EmbedChunksDeps = defaultDeps): Promise<{ embedded: number }> {
-  const { organizationId, documentId, chunkIds, requestId } = job.data;
-  const log = createJobLogger({ jobId: job.id, organizationId, documentId, requestId });
+  const { organizationId, documentId, knowledgeBaseId, chunkIds, requestId } = job.data;
+  const log = createJobLogger({ jobId: job.id, organizationId, documentId, requestId, knowledgeBaseId });
 
   try {
     const { chunks, embeddedIds } = await withTenantTransaction(organizationId, async (tx) => {
