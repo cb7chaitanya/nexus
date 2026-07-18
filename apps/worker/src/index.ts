@@ -66,6 +66,17 @@ async function main(): Promise<void> {
       // Fixed jobId so restarting the worker doesn't accumulate a second,
       // third, ... repeatable schedule for the same logical job.
       jobId: "sweep-stuck-documents-schedule",
+      // Same retry policy as every other queue in this pipeline (see
+      // queue/queues.ts's DEFAULT_JOB_OPTS) — previously absent here,
+      // which meant a single transient failure (e.g. a Postgres blip
+      // mid-pass) permanently skipped that whole sweep run instead of
+      // retrying, silently widening the window a genuinely stuck document
+      // could sit unnoticed in (docs/decisions.md R8). The next
+      // `repeat.every` tick would eventually run anyway, but that's a
+      // fixed schedule, not a retry — this makes a failed pass actually
+      // retry before falling back to waiting for the next tick.
+      attempts: 3,
+      backoff: { type: "exponential", delay: 5000 },
     },
   );
   const sweepWorker = new Worker(QUEUE_NAMES.sweep, (job) => sweepStuckDocuments({ job }), {
