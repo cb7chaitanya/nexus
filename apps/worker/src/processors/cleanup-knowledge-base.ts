@@ -30,8 +30,12 @@ export async function cleanupKnowledgeBaseProcessor(job: Job<CleanupKnowledgeBas
   const { organizationId, knowledgeBaseId } = job.data;
   const log = createJobLogger({ jobId: job.id, organizationId });
 
+  // DELETED documents excluded: their object was already removed by
+  // DELETE /documents/:id (see apps/api/src/routes/documents.ts) —
+  // re-deleting it here would just be redundant (harmless per this
+  // function's own doc comment, but pointless).
   const documents = await withTenantTransaction(organizationId, (tx) =>
-    tx.document.findMany({ where: { knowledgeBaseId }, select: { storageKey: true } }),
+    tx.document.findMany({ where: { knowledgeBaseId, status: { not: "DELETED" } }, select: { storageKey: true } }),
   );
 
   await deleteObjects(documents.map((d) => d.storageKey));

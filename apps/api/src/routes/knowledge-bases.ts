@@ -93,8 +93,12 @@ export async function knowledgeBaseRoutes(app: FastifyInstance): Promise<void> {
       const knowledgeBase = await tx.knowledgeBase.findUnique({ where: { id: knowledgeBaseId } });
       assertActiveKnowledgeBase(knowledgeBase);
 
+      // DELETED excluded — same "invisible in listings, still fetchable
+      // by id" treatment as GET /documents/:id gives it (see
+      // documents.ts). FAILED is deliberately still shown: a caller
+      // needs to see it to know it exists and can be retried.
       return tx.document.findMany({
-        where: { knowledgeBaseId },
+        where: { knowledgeBaseId, status: { not: "DELETED" } },
         orderBy: { createdAt: "desc" },
         take: input.limit,
         ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
@@ -163,10 +167,17 @@ export async function knowledgeBaseRoutes(app: FastifyInstance): Promise<void> {
       const knowledgeBase = await tx.knowledgeBase.findUnique({ where: { id: knowledgeBaseId } });
       assertActiveKnowledgeBase(knowledgeBase);
 
+      // DELETED documents have had their storage object and chunks
+      // already removed (see DELETE /documents/:id) — counting them here
+      // would overstate both documentCount and storageBytes for
+      // something that no longer actually occupies either. chunkCount
+      // needs no equivalent filter: a DELETED document's chunks are
+      // hard-deleted, not soft, so they're simply absent already.
+      const notDeleted = { knowledgeBaseId, status: { not: "DELETED" as const } };
       const [documentCount, chunkCount, storageAggregate] = await Promise.all([
-        tx.document.count({ where: { knowledgeBaseId } }),
+        tx.document.count({ where: notDeleted }),
         tx.documentChunk.count({ where: { knowledgeBaseId } }),
-        tx.document.aggregate({ where: { knowledgeBaseId }, _sum: { sizeBytes: true } }),
+        tx.document.aggregate({ where: notDeleted, _sum: { sizeBytes: true } }),
       ]);
 
       return {
@@ -249,8 +260,11 @@ export async function knowledgeBaseRoutes(app: FastifyInstance): Promise<void> {
 
       // Storage keys are read BEFORE the cascade delete — once the
       // Document rows are gone, so is the only record of which S3
-      // objects belonged to this KB.
-      const documents = await tx.document.findMany({ where: { knowledgeBaseId }, select: { storageKey: true } });
+      // objects belonged to this KB. DELETED documents excluded: their
+      // object was already removed by DELETE /documents/:id, so
+      // re-deleting it here would just be redundant (harmless, since S3
+      // treats deleting a missing key as success, but pointless).
+      const documents = await tx.document.findMany({ where: { knowledgeBaseId, status: { not: "DELETED" } }, select: { storageKey: true } });
       await tx.knowledgeBase.delete({ where: { id: knowledgeBaseId } });
       return { async: false as const, storageKeys: documents.map((d) => d.storageKey) };
     });
