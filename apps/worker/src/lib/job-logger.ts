@@ -5,6 +5,9 @@ export interface JobLogContext {
   jobId?: string;
   organizationId?: string;
   documentId?: string;
+  /** See DocumentJobData.requestId — carried through so a job's logs can
+   * be correlated back to the HTTP request that enqueued it. */
+  requestId?: string;
 }
 
 /**

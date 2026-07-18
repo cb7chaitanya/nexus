@@ -41,8 +41,8 @@ function batch<T>(items: T[], size: number): T[][] {
  * double up embedding work or process-document's pending-children count.
  */
 export async function chunkTextProcessor(job: Job<DocumentJobData>): Promise<{ chunkCount: number }> {
-  const { organizationId, documentId, knowledgeBaseId } = job.data;
-  const log = createJobLogger({ jobId: job.id, organizationId, documentId });
+  const { organizationId, documentId, knowledgeBaseId, requestId } = job.data;
+  const log = createJobLogger({ jobId: job.id, organizationId, documentId, requestId });
 
   try {
     if (!job.parent) {
@@ -107,7 +107,7 @@ export async function chunkTextProcessor(job: Job<DocumentJobData>): Promise<{ c
 
     const batches = batch(chunkIds, EMBED_BATCH_SIZE);
     for (const [batchIndex, batchChunkIds] of batches.entries()) {
-      const data: EmbedChunksJobData = { organizationId, documentId, knowledgeBaseId, chunkIds: batchChunkIds };
+      const data: EmbedChunksJobData = { organizationId, documentId, knowledgeBaseId, chunkIds: batchChunkIds, requestId };
       await documentEmbeddingQueue.add(JOB_NAMES.embedChunks, data, {
         ...DEFAULT_JOB_OPTS,
         // Hyphens, not colons — BullMQ rejects a custom jobId containing

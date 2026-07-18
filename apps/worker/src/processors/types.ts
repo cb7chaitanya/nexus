@@ -7,6 +7,16 @@ export interface DocumentJobData {
   organizationId: string;
   documentId: string;
   knowledgeBaseId: string;
+  /**
+   * The originating HTTP request's Fastify request.id (see apps/api's
+   * app.ts genReqId), threaded through enqueueDocumentIngestion so every
+   * log line this document's pipeline produces — across process
+   * boundaries and BullMQ's async job scheduling — can be correlated back
+   * to the request that triggered it. Optional: jobs enqueued outside an
+   * HTTP request (the stuck-document sweep's auto-retry, docs/decisions.md
+   * R8) have no request to attribute.
+   */
+  requestId?: string;
 }
 
 export interface EmbedChunksJobData extends DocumentJobData {

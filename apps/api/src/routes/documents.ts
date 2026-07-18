@@ -87,6 +87,7 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
         documentId,
         organizationId: input.organizationId,
         knowledgeBaseId: document.knowledgeBaseId,
+        requestId: request.id,
       });
 
       reply.send(updated);
@@ -225,6 +226,7 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
         organizationId: input.organizationId,
         knowledgeBaseId: updated.knowledgeBaseId,
         attempt: updated.retryCount,
+        requestId: request.id,
       });
 
       reply.send(updated);

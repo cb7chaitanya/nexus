@@ -16,8 +16,8 @@ import type { DocumentJobData } from "./types.js";
  * succeeded.
  */
 export async function processDocumentProcessor(job: Job<DocumentJobData>): Promise<void> {
-  const { organizationId, documentId, knowledgeBaseId } = job.data;
-  const log = createJobLogger({ jobId: job.id, organizationId, documentId });
+  const { organizationId, documentId, knowledgeBaseId, requestId } = job.data;
+  const log = createJobLogger({ jobId: job.id, organizationId, documentId, requestId });
 
   try {
     await withTenantTransaction(organizationId, async (tx) => {

@@ -37,6 +37,16 @@ export interface EnqueueDocumentIngestionInput {
    * unconditionally HSETs the jobId key with no existence check.
    */
   attempt?: number;
+  /**
+   * The originating HTTP request's Fastify request.id — carried on every
+   * job in this flow's data (and re-carried by chunk-text.ts onto the
+   * embed-chunks jobs it dynamically fans out) so a document's worker-side
+   * logs can be correlated back to the API request that enqueued it, even
+   * though the actual work happens in a different process on a later tick.
+   * Undefined for a caller with no request in scope (there are none today,
+   * but this stays optional rather than required for exactly that reason).
+   */
+  requestId?: string;
 }
 
 /**
@@ -62,6 +72,7 @@ export async function enqueueDocumentIngestion(input: EnqueueDocumentIngestionIn
     organizationId: input.organizationId,
     documentId: input.documentId,
     knowledgeBaseId: input.knowledgeBaseId,
+    requestId: input.requestId,
   };
 
   // Empty string for attempt 0 (the common case) so the original

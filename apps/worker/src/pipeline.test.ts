@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
 import { CreateBucketCommand, HeadBucketCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { prisma, withTenantTransaction } from "@raas/db";
 import { JOB_NAMES, QUEUE_NAMES } from "@raas/shared";
-import { FlowProducer, Worker } from "bullmq";
+import { FlowProducer, Queue, Worker } from "bullmq";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { env } from "./env.js";
@@ -43,8 +43,9 @@ const JOB_OPTS = {
 async function enqueueFlow(
   flowProducer: FlowProducer,
   input: { documentId: string; organizationId: string; knowledgeBaseId: string },
+  requestId?: string,
 ): Promise<void> {
-  const data = input;
+  const data = { ...input, requestId };
   await flowProducer.add({
     name: JOB_NAMES.processDocument,
     queueName: QUEUE_NAMES.processing,
@@ -261,5 +262,46 @@ describe("ingestion pipeline (extract-text -> chunk-text -> embed-chunks -> proc
     );
     expect(chunks.length).toBeGreaterThan(0);
     expect(chunks.every((c) => !c.has_embedding)).toBe(true);
+  });
+
+  it("propagates requestId from enqueue through every stage of the pipeline, surviving the BullMQ async boundary between queues", async () => {
+    // The previous test deliberately exhausts this organization's daily
+    // embedding-token budget (with a 24h TTL) to prove fail-fast behavior
+    // — undone here so this test gets a real READY run, not a budget
+    // rejection carried over from test ordering.
+    await redisConnection.del(`ratelimit:usage:org:${organizationId}:embedding-tokens:daily`);
+
+    const requestId = randomUUID();
+    const pdf = buildTestPdf([Array.from({ length: 30 }, (_, i) => `reqidword${i}`).join(" ")]);
+    const document = await createDocument(pdf, "request-correlation.pdf");
+
+    await enqueueFlow(flowProducer, { documentId: document.id, organizationId, knowledgeBaseId }, requestId);
+
+    const finalDocument = await waitForDocumentStatus(organizationId, document.id, ["READY", "FAILED"]);
+    expect(finalDocument.status).toBe("READY");
+
+    // Each stage runs as a separate BullMQ job, in a separate queue,
+    // scheduled on a later tick than the one that enqueued it — reading
+    // requestId back off each job's persisted data (rather than off
+    // whatever this test enqueued with) proves it actually survived that
+    // round trip through Redis, not just that it was passed in once.
+    const extractionQueue = new Queue(QUEUE_NAMES.extraction, { connection: redisConnection });
+    const processingQueue = new Queue(QUEUE_NAMES.processing, { connection: redisConnection });
+    try {
+      const extractJob = await extractionQueue.getJob(`${JOB_NAMES.extractText}-${document.id}`);
+      const chunkJob = await extractionQueue.getJob(`${JOB_NAMES.chunkText}-${document.id}`);
+      const processJob = await processingQueue.getJob(`${JOB_NAMES.processDocument}-${document.id}`);
+      // chunk-text.ts dynamically fans this one out — see that file's
+      // deterministic embed-chunks-<documentId>-<batchIndex> jobId.
+      const embedJob = await documentEmbeddingQueue.getJob(`${JOB_NAMES.embedChunks}-${document.id}-0`);
+
+      expect(extractJob?.data.requestId).toBe(requestId);
+      expect(chunkJob?.data.requestId).toBe(requestId);
+      expect(processJob?.data.requestId).toBe(requestId);
+      expect(embedJob?.data.requestId).toBe(requestId);
+    } finally {
+      await extractionQueue.close();
+      await processingQueue.close();
+    }
   });
 });
