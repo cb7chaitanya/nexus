@@ -22,3 +22,20 @@ export const listDocumentsQuerySchema = z
   })
   .merge(cursorPaginationSchema);
 export type ListDocumentsQuery = z.infer<typeof listDocumentsQuerySchema>;
+
+// GET/DELETE /documents/:id — :id is the document itself (URL param),
+// organizationId still has to come from somewhere since these routes
+// aren't nested under /organizations/:id; a query param, same convention
+// knowledgeBaseIdQuerySchema already uses for GET/DELETE /kb/:id.
+export const documentIdQuerySchema = z.object({
+  organizationId: z.string().uuid(),
+});
+export type DocumentIdQuery = z.infer<typeof documentIdQuerySchema>;
+
+// POST /documents/:id/retry — a POST, so organizationId comes from the
+// body instead (same convention completeDocumentSchema already uses for
+// POST /documents/:id/complete), not the query.
+export const retryDocumentSchema = z.object({
+  organizationId: z.string().uuid(),
+});
+export type RetryDocumentInput = z.infer<typeof retryDocumentSchema>;

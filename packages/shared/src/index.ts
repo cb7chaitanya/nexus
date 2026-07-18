@@ -46,8 +46,20 @@ export type {
 } from "./schemas/knowledge-bases.js";
 export { createApiKeySchema, listApiKeysQuerySchema } from "./schemas/api-keys.js";
 export type { CreateApiKeyInput, ListApiKeysQuery } from "./schemas/api-keys.js";
-export { completeDocumentSchema, listDocumentsQuerySchema, presignDocumentSchema } from "./schemas/documents.js";
-export type { CompleteDocumentInput, ListDocumentsQuery, PresignDocumentInput } from "./schemas/documents.js";
+export {
+  completeDocumentSchema,
+  documentIdQuerySchema,
+  listDocumentsQuerySchema,
+  presignDocumentSchema,
+  retryDocumentSchema,
+} from "./schemas/documents.js";
+export type {
+  CompleteDocumentInput,
+  DocumentIdQuery,
+  ListDocumentsQuery,
+  PresignDocumentInput,
+  RetryDocumentInput,
+} from "./schemas/documents.js";
 export { chatSchema } from "./schemas/chat.js";
 export type { ChatInput } from "./schemas/chat.js";
 export { getConversationQuerySchema, listConversationsQuerySchema, listMessagesQuerySchema } from "./schemas/conversations.js";
