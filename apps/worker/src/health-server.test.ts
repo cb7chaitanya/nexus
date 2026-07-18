@@ -11,6 +11,7 @@
 import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
+import { ingestionJobsStartedTotal } from "@raas/metrics";
 import { Queue, Worker, type Job } from "bullmq";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
@@ -90,8 +91,35 @@ describe("worker health server", () => {
     expect(body.checks.redis).toBe("healthy");
   });
 
-  it("returns 404 for anything other than GET /health", async () => {
+  it("returns 404 for anything other than GET /health or GET /metrics", async () => {
     const response = await fetch(`http://127.0.0.1:${port}/not-a-real-route`);
     expect(response.status).toBe(404);
+  });
+
+  describe("GET /metrics", () => {
+    it("returns 200 with Prometheus exposition text, no auth required", async () => {
+      const response = await fetch(`http://127.0.0.1:${port}/metrics`);
+      const body = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("text/plain");
+      expect(body).toContain("raas_ingestion_jobs_started_total");
+      expect(body).toContain("raas_document_processing_duration_seconds");
+    });
+
+    it("reflects a real metric increment — this process's own registry, not a static stub", async () => {
+      ingestionJobsStartedTotal.reset();
+      ingestionJobsStartedTotal.inc({ queue: "document-extraction", job_name: "extract-text" });
+
+      const response = await fetch(`http://127.0.0.1:${port}/metrics`);
+      const body = await response.text();
+
+      expect(body).toContain('raas_ingestion_jobs_started_total{queue="document-extraction",job_name="extract-text"} 1');
+    });
+
+    it("rejects non-GET methods the same way GET /health does", async () => {
+      const response = await fetch(`http://127.0.0.1:${port}/metrics`, { method: "POST" });
+      expect(response.status).toBe(404);
+    });
   });
 });

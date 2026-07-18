@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
+import { registry } from "@raas/metrics";
 import type { Queue, Worker } from "bullmq";
 
 import { getLastSuccessfulJobAt } from "./lib/health-state.js";
@@ -111,18 +112,35 @@ export async function handleHealthRequest(deps: HealthServerDeps, req: IncomingM
 }
 
 /**
- * No framework (no Fastify, unlike apps/api) — deliberately: this is one
- * route, on a process that's fundamentally a queue consumer, not a web
- * server. Node's own http module is the whole dependency footprint.
+ * Same registry apps/api's GET /metrics serves (@raas/metrics) — this
+ * process's own ingestion job counters/histograms (see index.ts's Worker
+ * "active"/"completed"/"failed" listeners) plus the shared default
+ * Node/process metrics. A separate handler from handleHealthRequest
+ * (rather than folding a third branch into it) so that function's own
+ * "anything other than GET /health is 404" contract, and its existing
+ * tests, stay exactly as they were.
+ */
+async function handleMetricsRequest(res: ServerResponse): Promise<void> {
+  const body = await registry.metrics();
+  res.writeHead(200, { "content-type": registry.contentType });
+  res.end(body);
+}
+
+/**
+ * No framework (no Fastify, unlike apps/api) — deliberately: this is a
+ * couple of routes, on a process that's fundamentally a queue consumer,
+ * not a web server. Node's own http module is the whole dependency
+ * footprint.
  */
 export function startHealthServer(deps: HealthServerDeps, port: number, host: string): Server {
   const server = createServer((req, res) => {
-    handleHealthRequest(deps, req, res).catch(() => {
-      // handleHealthRequest's own checks already catch everything
-      // meaningful (see checkRedis/checkQueues) — this only guards
-      // against something going wrong in response serialization itself,
-      // so the health server can never crash the worker process it's
-      // reporting on.
+    const handle = req.method === "GET" && req.url === "/metrics" ? handleMetricsRequest(res) : handleHealthRequest(deps, req, res);
+
+    handle.catch(() => {
+      // Each handler's own checks already catch everything meaningful
+      // (see checkRedis/checkQueues) — this only guards against something
+      // going wrong in response serialization itself, so the health
+      // server can never crash the worker process it's reporting on.
       if (!res.headersSent) {
         res.writeHead(500, { "content-type": "application/json" });
       }

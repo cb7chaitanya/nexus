@@ -1,5 +1,12 @@
 import { JOB_NAMES, QUEUE_NAMES } from "@raas/shared";
 import { createLogger } from "@raas/logger";
+import {
+  documentIngestionDurationSeconds,
+  documentProcessingDurationSeconds,
+  ingestionJobsCompletedTotal,
+  ingestionJobsFailedTotal,
+  ingestionJobsStartedTotal,
+} from "@raas/metrics";
 import { Queue, Worker } from "bullmq";
 
 import { env } from "./env.js";
@@ -114,6 +121,41 @@ async function main(): Promise<void> {
     });
     worker.on("completed", () => {
       recordJobSuccess();
+    });
+  }
+
+  // Ingestion job metrics (@raas/metrics) — scoped to the three workers
+  // that make up the actual document-ingestion pipeline (processing,
+  // extraction, embedding), not the sweep/kb-cleanup maintenance workers
+  // above: "ingestion jobs started/completed/failed" means this pipeline
+  // specifically, not every BullMQ job this process ever runs. Pure event
+  // listeners on top of BullMQ's own Worker lifecycle events — no
+  // processor file is touched, so this cannot change what any of them
+  // decide, only observe it after the fact.
+  const ingestionWorkers = [processingWorker, extractionWorker, embeddingWorker];
+  for (const worker of ingestionWorkers) {
+    worker.on("active", (job) => {
+      ingestionJobsStartedTotal.inc({ queue: job.queueName, job_name: job.name });
+    });
+    worker.on("completed", (job) => {
+      ingestionJobsCompletedTotal.inc({ queue: job.queueName, job_name: job.name });
+      if (job.processedOn && job.finishedOn) {
+        documentProcessingDurationSeconds.observe({ queue: job.queueName, job_name: job.name }, (job.finishedOn - job.processedOn) / 1000);
+      }
+      // process-document only ever completes once the WHOLE flow (every
+      // descendant job) has finished — see @raas/metrics's
+      // documentIngestionDurationSeconds doc comment for why job.timestamp
+      // (this flow's enqueue time) to job.finishedOn is the real,
+      // end-to-end document ingestion duration, not just this one job's
+      // own slice.
+      if (job.name === JOB_NAMES.processDocument && job.finishedOn) {
+        documentIngestionDurationSeconds.observe((job.finishedOn - job.timestamp) / 1000);
+      }
+    });
+    worker.on("failed", (job) => {
+      if (job) {
+        ingestionJobsFailedTotal.inc({ queue: job.queueName, job_name: job.name });
+      }
     });
   }
 
