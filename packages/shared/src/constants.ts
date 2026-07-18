@@ -8,6 +8,22 @@ export const PLATFORM_EMBEDDING_DIM = 1536;
 // under Postgres's 32-bit `Document.sizeBytes` column ceiling (~2 GiB).
 export const MAX_UPLOAD_SIZE_BYTES = 1 * 1024 * 1024 * 1024;
 
+// Independent per-document ceiling on how many chunks (and therefore how
+// many embedding-provider calls) a single document can generate —
+// separate from, and enforced well below, an org's shared daily embedding
+// token budget (packages/usage/src/embedding-guard.ts, default 2,000,000
+// tokens/day). That budget eventually catches a pathological document too,
+// but only after the whole batch that crosses it has already been
+// embedded and billed — for a single huge or degenerate file, that can
+// mean one document alone consumes an entire org's daily budget before
+// anything stops it. This cap fails the document immediately, in
+// chunk-text (before any embed-chunks job is enqueued), so the blast
+// radius of one bad document is always bounded independent of the org's
+// budget size. At ~700 target tokens/chunk (apps/worker/src/lib/chunk-text.ts),
+// 1000 chunks is roughly 700k tokens — well under the daily default, and
+// far beyond what a real single document should ever legitimately need.
+export const MAX_CHUNKS_PER_DOCUMENT = 1000;
+
 // BullMQ queue/job names shared by apps/api (enqueues the flow after
 // POST /documents/:id/complete) and apps/worker (defines the processors
 // that consume it) — kept in one place so the two apps can't drift apart

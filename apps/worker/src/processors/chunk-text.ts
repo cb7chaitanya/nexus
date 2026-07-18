@@ -1,4 +1,4 @@
-import { JOB_NAMES } from "@raas/shared";
+import { JOB_NAMES, MAX_CHUNKS_PER_DOCUMENT } from "@raas/shared";
 import { withTenantTransaction } from "@raas/db";
 import { UnrecoverableError, type Job } from "bullmq";
 
@@ -58,6 +58,15 @@ export async function chunkTextProcessor(job: Job<DocumentJobData>): Promise<{ c
     const chunks = chunkPages(extracted.pages);
     if (chunks.length === 0) {
       throw new UnrecoverableError("document produced no extractable text chunks");
+    }
+    // Cost-safety cap (docs/decisions.md R4) — checked before any upsert or
+    // embed-chunks job is enqueued, so an oversized document never spends a
+    // single embedding-provider call. See MAX_CHUNKS_PER_DOCUMENT's doc
+    // comment for why this is independent of the org's daily budget.
+    if (chunks.length > MAX_CHUNKS_PER_DOCUMENT) {
+      throw new UnrecoverableError(
+        `document produced ${chunks.length} chunks, exceeding the ${MAX_CHUNKS_PER_DOCUMENT}-chunk-per-document limit`,
+      );
     }
 
     const chunkIds = await withTenantTransaction(organizationId, async (tx) => {
