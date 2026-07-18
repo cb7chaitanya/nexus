@@ -103,6 +103,35 @@ export async function withUserContext<T>(
 }
 
 /**
+ * Runs `callback` inside a single Postgres transaction with
+ * `app.current_api_key_hash` set for the duration of that transaction —
+ * the ApiKey-table analogue of withUserContext above, for the exact same
+ * shaped problem: requireApiKeyAuth (apps/api/src/plugins/api-key-auth.ts)
+ * has to resolve organizationId FROM a bearer token's hash, before any org
+ * context exists to scope a query by. `hashedKey` is a SHA-256 hex digest
+ * the caller already computed from a token it possesses — not user input
+ * echoed back, not a client-supplied org id — so this is "possession of
+ * the hash is the access grant," the same shape OrganizationInvite's
+ * hashedToken already relies on (see schema.prisma), just backed by a
+ * real RLS policy (api_key_hash_lookup — see migration
+ * 20260718100000_add_apikey_rls) instead of an application-level filter.
+ *
+ * SELECT-only at the policy level, and this function must never be used
+ * for anything other than that one lookup — same restriction as
+ * withUserContext, for the same reason: it is not a general tenant-context
+ * mechanism.
+ */
+export async function withApiKeyLookup<T>(
+  hashedKey: string,
+  callback: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.current_api_key_hash', ${hashedKey}, true)`;
+    return callback(tx);
+  });
+}
+
+/**
  * Sets app.current_org_id for the remainder of an ALREADY-OPEN
  * transaction, without opening a new one. withTenantTransaction can't be
  * used for this: it always opens its own transaction, which doesn't work

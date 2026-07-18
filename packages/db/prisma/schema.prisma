@@ -145,17 +145,22 @@ model OrganizationInvite {
 }
 
 // ───────────────────────── API keys ─────────────────────────
-// Deliberately NOT RLS-scoped, same reasoning as OrganizationInvite above
-// (this is the ApiKey model that comment refers to): a future public,
-// API-key-authenticated request path has to resolve organizationId FROM
-// the key itself, before any tenant context exists to scope a query
-// by — the same chicken-and-egg problem invite acceptance has. The
-// session-authenticated management routes this ticket adds (POST/GET
-// /organizations/:id/api-keys, DELETE .../api-keys/:keyId) already have
-// organizationId from an authenticated, membership-checked session, so
-// every query they issue filters by it explicitly in application code —
-// there is no RLS backstop on this table, by design, matching
-// OrganizationInvite exactly.
+// RLS-scoped (see migration 20260718100000_add_apikey_rls) with TWO
+// permissive policies, OR'd together by Postgres:
+//   - "tenant_isolation": the standard organizationId = app.current_org_id
+//     pattern every other tenant table uses — what the session-
+//     authenticated management routes (POST/GET /organizations/:id/api-keys,
+//     DELETE .../api-keys/:keyId) go through via withTenantTransaction,
+//     same as every other route in this codebase.
+//   - "api_key_hash_lookup": SELECT-only, scoped by a hash of the bearer
+//     token itself (app.current_api_key_hash, set via withApiKeyLookup —
+//     packages/db/src/tenant.ts) — what requireApiKeyAuth
+//     (apps/api/src/plugins/api-key-auth.ts) uses to resolve organizationId
+//     FROM the key, before any org context exists. This solves the same
+//     chicken-and-egg problem OrganizationMember's self_membership_lookup
+//     policy solves for session auth (20260715081815) — "possession of a
+//     high-entropy value is itself the access grant" — just backed by RLS
+//     now instead of a bypass.
 //
 // hashedKey is SHA-256 of the raw key, not argon2 — same reasoning as
 // hashInviteToken (apps/api/src/lib/invites.ts): the raw key is

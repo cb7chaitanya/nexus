@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { prisma, setTenantContext, withTenantTransaction, withUserContext } from "./index.js";
+import { prisma, setTenantContext, withApiKeyLookup, withTenantTransaction, withUserContext } from "./index.js";
 
 describe("tenant isolation (RLS)", () => {
   let orgA: { id: string };
@@ -423,6 +423,88 @@ describe("tenant isolation (RLS) — KnowledgeBase / Document", () => {
         }),
       ),
     ).resolves.toMatchObject({ content: "updated" });
+  });
+});
+
+describe("tenant isolation (RLS) — ApiKey", () => {
+  let orgA: { id: string };
+  let orgB: { id: string };
+
+  beforeAll(async () => {
+    const suffix = randomUUID().slice(0, 8);
+
+    [orgA, orgB] = await Promise.all([
+      prisma.organization.create({ data: { name: `Org A ${suffix}`, slug: `org-a-apikey-${suffix}` } }),
+      prisma.organization.create({ data: { name: `Org B ${suffix}`, slug: `org-b-apikey-${suffix}` } }),
+    ]);
+  });
+
+  afterAll(async () => {
+    await prisma.organization.deleteMany({ where: { id: { in: [orgA.id, orgB.id] } } });
+  });
+
+  it("returns only org A's ApiKey rows when queried with org A's tenant context", async () => {
+    await withTenantTransaction(orgA.id, (tx) =>
+      tx.apiKey.create({ data: { organizationId: orgA.id, name: "Org A Key", hashedKey: `hash-a-${randomUUID()}`, prefix: "rk_live_aaaa" } }),
+    );
+    await withTenantTransaction(orgB.id, (tx) =>
+      tx.apiKey.create({ data: { organizationId: orgB.id, name: "Org B Key", hashedKey: `hash-b-${randomUUID()}`, prefix: "rk_live_bbbb" } }),
+    );
+
+    const asOrgA = await withTenantTransaction(orgA.id, (tx) => tx.apiKey.findMany());
+    expect(asOrgA).toHaveLength(1);
+    expect(asOrgA[0]?.organizationId).toBe(orgA.id);
+  });
+
+  it("rejects smuggling an ApiKey row under another org's id (WITH CHECK)", async () => {
+    await expect(
+      withTenantTransaction(orgA.id, (tx) =>
+        tx.apiKey.create({
+          data: { organizationId: orgB.id, name: "smuggled", hashedKey: `hash-smuggle-${randomUUID()}`, prefix: "rk_live_cccc" },
+        }),
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("withApiKeyLookup (requireApiKeyAuth's mechanism) resolves a key by hash regardless of tenant context, and only that one row", async () => {
+    const hashedKey = `hash-lookup-${randomUUID()}`;
+    await withTenantTransaction(orgA.id, (tx) =>
+      tx.apiKey.create({ data: { organizationId: orgA.id, name: "Lookup Key", hashedKey, prefix: "rk_live_dddd" } }),
+    );
+
+    const found = await withApiKeyLookup(hashedKey, (tx) => tx.apiKey.findUnique({ where: { hashedKey } }));
+    expect(found?.organizationId).toBe(orgA.id);
+
+    // No org context was ever set for this lookup — the hash alone
+    // resolved it, which is the entire point (see this function's doc
+    // comment on packages/db/src/tenant.ts).
+    const rows = await withApiKeyLookup(hashedKey, (tx) => tx.apiKey.findMany());
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.hashedKey).toBe(hashedKey);
+  });
+
+  it("withApiKeyLookup never resolves a key other than the one matching the given hash", async () => {
+    const hashedKey = `hash-real-${randomUUID()}`;
+    await withTenantTransaction(orgA.id, (tx) =>
+      tx.apiKey.create({ data: { organizationId: orgA.id, name: "Real Key", hashedKey, prefix: "rk_live_eeee" } }),
+    );
+    await withTenantTransaction(orgB.id, (tx) =>
+      tx.apiKey.create({ data: { organizationId: orgB.id, name: "Other Org Key", hashedKey: `hash-other-${randomUUID()}`, prefix: "rk_live_ffff" } }),
+    );
+
+    // A hash that resolves to nothing — proves this is a real, scoped
+    // lookup, not something that happens to return every row.
+    const found = await withApiKeyLookup(`hash-nonexistent-${randomUUID()}`, (tx) => tx.apiKey.findMany());
+    expect(found).toHaveLength(0);
+  });
+
+  it("the api_key_hash_lookup policy is SELECT-only — cannot write through it", async () => {
+    const hashedKey = `hash-write-${randomUUID()}`;
+    await expect(
+      withApiKeyLookup(hashedKey, (tx) =>
+        tx.apiKey.create({ data: { organizationId: orgA.id, name: "Should Not Insert", hashedKey, prefix: "rk_live_gggg" } }),
+      ),
+    ).rejects.toThrow();
   });
 });
 

@@ -19,6 +19,7 @@ import { healthRoutes } from "./routes/health.js";
 import { knowledgeBaseRoutes } from "./routes/knowledge-bases.js";
 import { organizationRoutes } from "./routes/organizations.js";
 import { usageRoutes } from "./routes/usage.js";
+import { v1Routes } from "./routes/v1.js";
 import { workspaceRoutes } from "./routes/workspaces.js";
 
 /**
@@ -132,6 +133,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(chatRoutes);
   await app.register(conversationRoutes);
   await app.register(usageRoutes);
+  await app.register(v1Routes);
 
   return app;
 }

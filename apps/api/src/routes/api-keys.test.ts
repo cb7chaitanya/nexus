@@ -4,7 +4,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { prisma } from "@raas/db";
+import { prisma, withTenantTransaction } from "@raas/db";
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -95,7 +95,7 @@ describe("API key routes", () => {
     });
     const { apiKey, key } = response.json();
 
-    const stored = await prisma.apiKey.findUnique({ where: { id: apiKey.id } });
+    const stored = await withTenantTransaction(organizationId, (tx) => tx.apiKey.findUnique({ where: { id: apiKey.id } }));
     expect(stored!.hashedKey).toBe(hashApiKey(key));
     expect(stored!.hashedKey).not.toBe(key);
   });
@@ -179,7 +179,7 @@ describe("API key routes", () => {
     });
     expect(response.statusCode).toBe(204);
 
-    const stored = await prisma.apiKey.findUnique({ where: { id: keyId } });
+    const stored = await withTenantTransaction(organizationId, (tx) => tx.apiKey.findUnique({ where: { id: keyId } }));
     expect(stored!.revokedAt).not.toBeNull();
   });
 
@@ -197,7 +197,7 @@ describe("API key routes", () => {
       url: `/organizations/${organizationId}/api-keys/${keyId}`,
       cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
     });
-    const firstRevokedAt = (await prisma.apiKey.findUnique({ where: { id: keyId } }))!.revokedAt;
+    const firstRevokedAt = (await withTenantTransaction(organizationId, (tx) => tx.apiKey.findUnique({ where: { id: keyId } })))!.revokedAt;
 
     const second = await app.inject({
       method: "DELETE",
@@ -206,7 +206,7 @@ describe("API key routes", () => {
     });
     expect(second.statusCode).toBe(204);
 
-    const secondRevokedAt = (await prisma.apiKey.findUnique({ where: { id: keyId } }))!.revokedAt;
+    const secondRevokedAt = (await withTenantTransaction(organizationId, (tx) => tx.apiKey.findUnique({ where: { id: keyId } })))!.revokedAt;
     expect(secondRevokedAt!.getTime()).toBe(firstRevokedAt!.getTime());
   });
 
@@ -252,7 +252,7 @@ describe("API key routes", () => {
     });
     expect(response.statusCode).toBe(404);
 
-    const stored = await prisma.apiKey.findUnique({ where: { id: keyId } });
+    const stored = await withTenantTransaction(organizationId, (tx) => tx.apiKey.findUnique({ where: { id: keyId } }));
     expect(stored!.revokedAt).toBeNull();
   });
 

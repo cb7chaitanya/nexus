@@ -1,5 +1,5 @@
 import { ApiError, createApiKeySchema, listApiKeysQuerySchema, parseOrThrow } from "@raas/shared";
-import { prisma } from "@raas/db";
+import { withTenantTransaction } from "@raas/db";
 import type { FastifyInstance } from "fastify";
 
 import { generateApiKey, hashApiKey } from "../lib/api-keys.js";
@@ -26,15 +26,15 @@ function toPublicApiKey(key: {
  * API key management (docs/architecture.md's "API keys" section) — the
  * session-authenticated create/list/revoke surface only. The
  * API-key-AUTHENTICATED public request path (architecture.md's "Public
- * API" section, /v1/...) is a separate, much larger ticket (a whole new
- * auth mechanism) and out of scope here.
+ * API" section, /v1/...) is a separate concern (see
+ * plugins/api-key-auth.ts's requireApiKeyAuth and routes/v1.ts) — this
+ * file is only ever reached via a session (requireAuth), never a bearer
+ * token.
  *
- * ApiKey has no RLS policy (see schema.prisma's comment on the model,
- * same reasoning as OrganizationInvite) — every query here uses the
- * plain `prisma` client with an explicit organizationId filter, not
- * withTenantTransaction. requireOrgMembership having already confirmed
- * real membership is what makes that safe: a non-member gets 404 before
- * any of these handlers run.
+ * ApiKey has a real RLS policy (see migration 20260718100000_add_apikey_rls)
+ * — every query here goes through withTenantTransaction, scoped by the
+ * organizationId requireOrgMembership already confirmed real membership
+ * for, same as every other tenant-scoped route in this codebase.
  */
 export async function apiKeyRoutes(app: FastifyInstance): Promise<void> {
   // ADMIN-or-higher on every route — API keys grant programmatic access
@@ -51,16 +51,18 @@ export async function apiKeyRoutes(app: FastifyInstance): Promise<void> {
       if (!userId) throw ApiError.unauthorized();
 
       const { raw, prefix } = generateApiKey();
-      const apiKey = await prisma.apiKey.create({
-        data: {
-          organizationId,
-          name: input.name,
-          hashedKey: hashApiKey(raw),
-          prefix,
-          createdBy: userId,
-          expiresAt: input.expiresAt,
-        },
-      });
+      const apiKey = await withTenantTransaction(organizationId, (tx) =>
+        tx.apiKey.create({
+          data: {
+            organizationId,
+            name: input.name,
+            hashedKey: hashApiKey(raw),
+            prefix,
+            createdBy: userId,
+            expiresAt: input.expiresAt,
+          },
+        }),
+      );
 
       // The only time `raw` is ever returned — never stored, never
       // retrievable again after this response (see schema.prisma's
@@ -76,12 +78,13 @@ export async function apiKeyRoutes(app: FastifyInstance): Promise<void> {
       const { id: organizationId } = request.params as { id: string };
       const input = parseOrThrow(listApiKeysQuerySchema, request.query);
 
-      const apiKeys = await prisma.apiKey.findMany({
-        where: { organizationId },
-        orderBy: { createdAt: "asc" },
-        take: input.limit,
-        ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
-      });
+      const apiKeys = await withTenantTransaction(organizationId, (tx) =>
+        tx.apiKey.findMany({
+          orderBy: { createdAt: "asc" },
+          take: input.limit,
+          ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+        }),
+      );
 
       reply.send(paginate(apiKeys.map(toPublicApiKey), input.limit));
     },
@@ -93,7 +96,7 @@ export async function apiKeyRoutes(app: FastifyInstance): Promise<void> {
     async (request, reply) => {
       const { id: organizationId, keyId } = request.params as { id: string; keyId: string };
 
-      const existing = await prisma.apiKey.findFirst({ where: { id: keyId, organizationId } });
+      const existing = await withTenantTransaction(organizationId, (tx) => tx.apiKey.findUnique({ where: { id: keyId } }));
       if (!existing) {
         throw ApiError.notFound("API key not found");
       }
@@ -102,7 +105,7 @@ export async function apiKeyRoutes(app: FastifyInstance): Promise<void> {
       // original revokedAt rather than overwriting it with a later
       // timestamp, but still returns success either way.
       if (!existing.revokedAt) {
-        await prisma.apiKey.update({ where: { id: keyId }, data: { revokedAt: new Date() } });
+        await withTenantTransaction(organizationId, (tx) => tx.apiKey.update({ where: { id: keyId }, data: { revokedAt: new Date() } }));
       }
 
       reply.status(204).send();

@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 
-import { prisma } from "@raas/db";
+import { withTenantTransaction } from "@raas/db";
 
 // Visible, non-secret prefix for identification in the dashboard/list
 // endpoint — long enough to tell keys apart at a glance, far too short
@@ -31,20 +31,18 @@ export function hashApiKey(raw: string): string {
 }
 
 /**
- * Updates lastUsedAt for a key. Not called by any route in this ticket —
- * there is no API-key-authenticated request path yet (see
- * docs/architecture.md's "Public API" section, out of scope here); this
- * is the ready-to-use integration point a future one calls on every
- * successful key verification, kept alongside the rest of this file's key
- * lifecycle logic rather than left for that ticket to invent from
- * scratch. Best-effort by design: a lastUsedAt update failing should
- * never fail the request that was actually using the key.
+ * Updates lastUsedAt for a key. Called by requireApiKeyAuth
+ * (apps/api/src/plugins/api-key-auth.ts) on every successful key
+ * verification. Best-effort by design: a lastUsedAt update failing should
+ * never fail the request that was actually using the key — callers should
+ * not await this without a .catch, or should treat a rejection as
+ * non-fatal.
  *
- * Plain `prisma`, not withTenantTransaction — ApiKey has no RLS policy
- * (see schema.prisma's comment on the model), so organizationId is an
- * explicit application-level filter here, same as every OrganizationInvite
- * query in this codebase.
+ * withTenantTransaction, scoped to the key's own organizationId — ApiKey
+ * now has a real RLS policy (see migration 20260718100000_add_apikey_rls),
+ * so this goes through the standard tenant_isolation policy like every
+ * other write in this codebase, not an application-level filter.
  */
 export async function recordApiKeyUsage(organizationId: string, keyId: string): Promise<void> {
-  await prisma.apiKey.updateMany({ where: { id: keyId, organizationId }, data: { lastUsedAt: new Date() } });
+  await withTenantTransaction(organizationId, (tx) => tx.apiKey.updateMany({ where: { id: keyId }, data: { lastUsedAt: new Date() } }));
 }

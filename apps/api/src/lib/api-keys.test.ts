@@ -5,7 +5,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { prisma } from "@raas/db";
+import { prisma, withTenantTransaction } from "@raas/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { generateApiKey, hashApiKey, recordApiKeyUsage } from "./api-keys.js";
@@ -54,9 +54,11 @@ describe("recordApiKeyUsage", () => {
     orgB = await prisma.organization.create({ data: { name: `ApiKey Usage Org B ${suffix}`, slug: `apikey-usage-b-${suffix}` } });
 
     const { raw } = generateApiKey();
-    const key = await prisma.apiKey.create({
-      data: { organizationId: orgA.id, name: "Usage Test Key", hashedKey: hashApiKey(raw), prefix: raw.slice(0, 12) },
-    });
+    const key = await withTenantTransaction(orgA.id, (tx) =>
+      tx.apiKey.create({
+        data: { organizationId: orgA.id, name: "Usage Test Key", hashedKey: hashApiKey(raw), prefix: raw.slice(0, 12) },
+      }),
+    );
     keyId = key.id;
   });
 
@@ -66,20 +68,23 @@ describe("recordApiKeyUsage", () => {
   });
 
   it("sets lastUsedAt on the correct key", async () => {
-    expect((await prisma.apiKey.findUnique({ where: { id: keyId } }))!.lastUsedAt).toBeNull();
+    expect((await withTenantTransaction(orgA.id, (tx) => tx.apiKey.findUnique({ where: { id: keyId } })))!.lastUsedAt).toBeNull();
 
     await recordApiKeyUsage(orgA.id, keyId);
 
-    expect((await prisma.apiKey.findUnique({ where: { id: keyId } }))!.lastUsedAt).not.toBeNull();
+    expect((await withTenantTransaction(orgA.id, (tx) => tx.apiKey.findUnique({ where: { id: keyId } })))!.lastUsedAt).not.toBeNull();
   });
 
   it("does nothing when the organizationId doesn't match the key's actual org", async () => {
-    const before = (await prisma.apiKey.findUnique({ where: { id: keyId } }))!.lastUsedAt;
+    const before = (await withTenantTransaction(orgA.id, (tx) => tx.apiKey.findUnique({ where: { id: keyId } })))!.lastUsedAt;
 
-    // Wrong org for this key — updateMany's where clause matches zero rows.
+    // Wrong org for this key — RLS scopes every row in this transaction to
+    // orgB, so the key (which belongs to orgA) isn't visible to update at
+    // all; updateMany matches zero rows for the same reason an app-level
+    // organizationId filter used to.
     await recordApiKeyUsage(orgB.id, keyId);
 
-    const after = (await prisma.apiKey.findUnique({ where: { id: keyId } }))!.lastUsedAt;
+    const after = (await withTenantTransaction(orgA.id, (tx) => tx.apiKey.findUnique({ where: { id: keyId } })))!.lastUsedAt;
     expect(after?.getTime()).toBe(before?.getTime());
   });
 });
