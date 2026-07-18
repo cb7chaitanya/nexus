@@ -9,6 +9,7 @@
  */
 import { randomUUID } from "node:crypto";
 
+import { resetErrorTrackerForTesting, setErrorTracker } from "@raas/observability";
 import { Queue, Worker } from "bullmq";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -56,6 +57,7 @@ describe("handleJobFailure", () => {
       await queue.close();
       queue = undefined;
     }
+    resetErrorTrackerForTesting();
   });
 
   it("does not notify on an attempt that BullMQ will still retry, only on the definitively final one", async () => {
@@ -113,6 +115,48 @@ describe("handleJobFailure", () => {
       retryCount: 1,
     });
     expect(typeof notifier.calls[0]?.occurredAt).toBe("string");
+  }, 20_000);
+
+  it("reports a permanently-failed job to the active error tracker with job/tenant context, but never a retryable attempt", async () => {
+    const queueName = `test-job-failure-alerts-capture-${randomUUID().slice(0, 8)}`;
+    queue = new Queue(queueName, { connection: redisConnection });
+    const notifier = new RecordingNotifier();
+    const captured: Array<{ error: unknown; context?: Record<string, unknown> }> = [];
+    setErrorTracker({
+      captureException: (error, context) => {
+        captured.push({ error, context });
+      },
+    });
+
+    worker = new Worker(queueName, () => Promise.reject(new Error("captured failure")), { connection: redisConnection });
+    worker.on("failed", (job, err) => {
+      void handleJobFailure(notifier, job, err);
+    });
+    await worker.waitUntilReady();
+
+    await queue.add(
+      "captured",
+      { organizationId: "org-capture", documentId: "doc-capture", knowledgeBaseId: "kb-capture", requestId: "req-capture" },
+      { attempts: 2, backoff: { type: "fixed", delay: 100 }, jobId: "capture-job-1" },
+    );
+
+    await waitFor(() => notifier.calls.length >= 1);
+
+    // Exactly one capture — the retryable first attempt never reached
+    // captureException, only the definitively final one did (mirrors the
+    // notifier's own retry-vs-permanent distinction above).
+    expect(captured).toHaveLength(1);
+    expect(captured[0]!.error).toBeInstanceOf(Error);
+    expect((captured[0]!.error as Error).message).toBe("captured failure");
+    expect(captured[0]!.context).toMatchObject({
+      jobId: "capture-job-1",
+      jobName: "captured",
+      queueName,
+      organizationId: "org-capture",
+      documentId: "doc-capture",
+      knowledgeBaseId: "kb-capture",
+      requestId: "req-capture",
+    });
   }, 20_000);
 
   it("a notifier that throws never crashes the worker — it keeps running and can still process the next job", async () => {

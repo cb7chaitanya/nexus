@@ -1,5 +1,6 @@
 import { ApiError } from "@raas/shared";
 import { Prisma } from "@raas/db";
+import { captureException } from "@raas/observability";
 import type { FastifyError, FastifyInstance } from "fastify";
 
 /**
@@ -47,6 +48,12 @@ export function registerErrorHandler(app: FastifyInstance): void {
     }
 
     request.log.error({ err }, "unhandled error");
+    // Only genuinely unexpected/bug-class errors reach here — every
+    // expected failure (ApiError, a known Prisma conflict, a framework
+    // 4xx) already returned above without calling this. Keeps whatever
+    // error tracker is active (NoopErrorTracker by default — see
+    // @raas/observability) from being flooded with routine 4xx traffic.
+    captureException(err, { requestId, route: request.routeOptions?.url, method: request.method });
     const apiErr = ApiError.internal();
     reply.status(500).send(apiErr.toResponseBody(requestId));
   });

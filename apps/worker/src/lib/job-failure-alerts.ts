@@ -1,3 +1,4 @@
+import { captureException } from "@raas/observability";
 import type { Job } from "bullmq";
 
 import type { Notifier } from "./notifications/index.js";
@@ -19,8 +20,14 @@ import { createJobLogger } from "./job-logger.js";
  * sync with whatever BullMQ's own retry decision actually was.
  */
 export async function handleJobFailure(notifier: Notifier, job: Job | undefined, err: Error): Promise<void> {
-  const data = job?.data as { organizationId?: string; documentId?: string } | undefined;
-  const log = createJobLogger({ jobId: job?.id, organizationId: data?.organizationId, documentId: data?.documentId });
+  const data = job?.data as { organizationId?: string; documentId?: string; knowledgeBaseId?: string; requestId?: string } | undefined;
+  const log = createJobLogger({
+    jobId: job?.id,
+    organizationId: data?.organizationId,
+    documentId: data?.documentId,
+    knowledgeBaseId: data?.knowledgeBaseId,
+    requestId: data?.requestId,
+  });
   log.error({ jobName: job?.name, err }, "job failed");
 
   if (!job?.finishedOn) {
@@ -28,6 +35,21 @@ export async function handleJobFailure(notifier: Notifier, job: Job | undefined,
     // permanent failure yet, nothing to alert on.
     return;
   }
+
+  // Only a job that's DEFINITIVELY done retrying reaches here (see the
+  // finishedOn check above) — the worker-side equivalent of
+  // error-handler.ts's "only unexpected/bug-class errors" rule: routine
+  // per-attempt transient failures never reach this branch, only ones
+  // BullMQ has given up on.
+  captureException(err, {
+    jobId: job.id,
+    jobName: job.name,
+    queueName: job.queueName,
+    organizationId: data?.organizationId,
+    documentId: data?.documentId,
+    knowledgeBaseId: data?.knowledgeBaseId,
+    requestId: data?.requestId,
+  });
 
   try {
     await notifier.notifyJobFailure({
