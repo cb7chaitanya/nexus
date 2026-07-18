@@ -188,8 +188,17 @@ describe("knowledge base routes", () => {
     const body = response.json();
     expect(body.document.status).toBe("PENDING_UPLOAD");
     expect(body.document.knowledgeBaseId).toBe(knowledgeBaseId);
+    // Presigned POST (not PUT — see lib/storage.ts's createPresignedUpload):
+    // the storage key travels as a form field, not embedded in the URL
+    // itself, and the returned fields must include a content-length-range
+    // policy condition bounding the upload to what was just declared.
     expect(typeof body.uploadUrl).toBe("string");
-    expect(body.uploadUrl).toContain(body.document.storageKey);
+    expect(body.uploadFields.key).toBe(body.document.storageKey);
+    expect(typeof body.uploadFields.Policy).toBe("string");
+    const decodedPolicy = JSON.parse(Buffer.from(body.uploadFields.Policy, "base64").toString("utf8")) as {
+      conditions: unknown[];
+    };
+    expect(decodedPolicy.conditions).toContainEqual(["content-length-range", 1, 1024]);
   });
 
   it("rejects presigning for an organization the caller isn't a member of", async () => {
