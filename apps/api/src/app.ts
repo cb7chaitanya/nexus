@@ -10,6 +10,7 @@ import { env } from "./env.js";
 import { GLOBAL_BODY_LIMIT_BYTES } from "./lib/body-limits.js";
 import { ensureBucketExists } from "./lib/storage.js";
 import { registerErrorHandler } from "./plugins/error-handler.js";
+import { registerMetrics } from "./plugins/metrics.js";
 import { apiKeyRoutes } from "./routes/api-keys.js";
 import { authRoutes } from "./routes/auth.js";
 import { chatRoutes } from "./routes/chat.js";
@@ -118,6 +119,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   registerErrorHandler(app);
+  registerMetrics(app);
 
   // Dev/test convenience (MinIO doesn't pre-provision a bucket the way a
   // real S3/R2 bucket is provisioned out of band) — see storage.ts.

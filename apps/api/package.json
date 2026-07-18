@@ -24,6 +24,8 @@
     "@raas/core": "workspace:*",
     "@raas/db": "workspace:*",
     "@raas/logger": "workspace:*",
+    "@raas/metrics": "workspace:*",
+    "@raas/observability": "workspace:*",
     "@raas/providers": "workspace:*",
     "@raas/rate-limit": "workspace:*",
     "@raas/shared": "workspace:*",

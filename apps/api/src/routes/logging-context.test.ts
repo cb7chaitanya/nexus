@@ -1,8 +1,9 @@
 /**
  * Integration tests against a real Fastify instance via app.inject() —
- * verifies requestId/userId/organizationId get bound onto request.log
- * (see plugins/auth-guard.ts and lib/membership.ts), not just that the
- * routes behave correctly.
+ * verifies requestId/userId/organizationId/method/route get bound onto
+ * request.log (see plugins/auth-guard.ts, lib/membership.ts, and
+ * plugins/metrics.ts for method/route), not just that the routes behave
+ * correctly.
  *
  * request.log.bindings() (a real pino API — the merged bindings from
  * every .child() call in this logger's lineage) is inspected directly
@@ -71,7 +72,7 @@ describe("request logging context", () => {
     await redis.quit();
   });
 
-  it("binds requestId, userId, and organizationId on an authenticated, org-scoped request", async () => {
+  it("binds requestId, userId, organizationId, method, and route on an authenticated, org-scoped request", async () => {
     const owner = await signup(app, `logctx-${suffix}@example.com`, "correct-horse-battery-staple", `Log Ctx Org ${suffix}`);
     captured.length = 0;
 
@@ -96,10 +97,12 @@ describe("request logging context", () => {
       requestId: expect.any(String),
       userId: expect.any(String),
       organizationId: owner.organizationId,
+      method: "POST",
+      route: "/kb",
     });
   });
 
-  it("binds requestId and userId, but no organizationId, on an authenticated request with no org context (GET /organizations)", async () => {
+  it("binds requestId, method, and route, and userId, but no organizationId, on an authenticated request with no org context (GET /organizations)", async () => {
     const owner = await signup(app, `logctx-noorg-${suffix}@example.com`, "correct-horse-battery-staple", `Log Ctx No Org ${suffix}`);
     captured.length = 0;
 
@@ -112,11 +115,17 @@ describe("request logging context", () => {
 
     const entry = captured.find((c) => c.url === "/organizations");
     expect(entry).toBeDefined();
-    expect(entry!.bindings).toMatchObject({ service: "api", requestId: expect.any(String), userId: expect.any(String) });
+    expect(entry!.bindings).toMatchObject({
+      service: "api",
+      requestId: expect.any(String),
+      userId: expect.any(String),
+      method: "GET",
+      route: "/organizations",
+    });
     expect(entry!.bindings.organizationId).toBeUndefined();
   });
 
-  it("binds only requestId (and service) on an anonymous auth route — no userId, no organizationId", async () => {
+  it("binds requestId, method, and route (but no userId, no organizationId) on an anonymous auth route", async () => {
     captured.length = 0;
 
     const response = await app.inject({
@@ -128,12 +137,12 @@ describe("request logging context", () => {
 
     const entry = captured.find((c) => c.url === "/auth/signup");
     expect(entry).toBeDefined();
-    expect(entry!.bindings).toMatchObject({ service: "api", requestId: expect.any(String) });
+    expect(entry!.bindings).toMatchObject({ service: "api", requestId: expect.any(String), method: "POST", route: "/auth/signup" });
     expect(entry!.bindings.userId).toBeUndefined();
     expect(entry!.bindings.organizationId).toBeUndefined();
   });
 
-  it("binds only requestId on the unauthenticated health check", async () => {
+  it("binds requestId, method, and route on the unauthenticated health check", async () => {
     captured.length = 0;
 
     const response = await app.inject({ method: "GET", url: "/health" });
@@ -141,9 +150,20 @@ describe("request logging context", () => {
 
     const entry = captured.find((c) => c.url === "/health");
     expect(entry).toBeDefined();
-    expect(entry!.bindings).toMatchObject({ service: "api", requestId: expect.any(String) });
+    expect(entry!.bindings).toMatchObject({ service: "api", requestId: expect.any(String), method: "GET", route: "/health" });
     expect(entry!.bindings.userId).toBeUndefined();
     expect(entry!.bindings.organizationId).toBeUndefined();
+  });
+
+  it("binds route as a fixed placeholder, not the raw URL, for a request that matches no route at all", async () => {
+    captured.length = 0;
+
+    const response = await app.inject({ method: "GET", url: "/this-route-does-not-exist" });
+    expect(response.statusCode).toBe(404);
+
+    const entry = captured.find((c) => c.url === "/this-route-does-not-exist");
+    expect(entry).toBeDefined();
+    expect(entry!.bindings).toMatchObject({ service: "api", method: "GET", route: "unmatched_route" });
   });
 
   it("never binds the raw session token/cookie value as a logged field", async () => {
