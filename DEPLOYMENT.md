@@ -158,3 +158,33 @@ matching this repo's existing no-mocking testing philosophy). On push to
 `main`, a second job builds all three production images
 (`apps/api/Dockerfile`, `apps/worker/Dockerfile`, `apps/web/Dockerfile`)
 and pushes them to GHCR, tagged both `latest` and the commit SHA.
+
+## Observability
+
+Full detail in [OBSERVABILITY.md](./OBSERVABILITY.md) — this section is the
+deployment-specific subset.
+
+- **Scrape targets**: `GET /metrics` on `apps/api` (same port as the rest of
+  the API) and `GET /metrics` on `apps/worker` (`WORKER_HEALTH_PORT`, same
+  internal-only port `GET /health` already uses — see the env var table
+  above). Both are Prometheus exposition format (`prom-client`), both
+  unauthenticated.
+- **Do not expose either `/metrics` endpoint publicly.** They carry no
+  tenant data, but they are operational detail (request rates, queue
+  throughput, error rates) an attacker can use for reconnaissance. Same
+  posture as `GET /health`: reachable inside the compose/cluster network and
+  by whatever scrapes it, never published to a public load balancer.
+  `docker-compose.prod.yml` already keeps `WORKER_HEALTH_PORT` internal-only
+  for this reason; a real Prometheus deployment should scrape both apps over
+  the same private network, not through any public ingress.
+- **No new required environment variables.** Metrics and the
+  `@raas/observability` no-op error tracker both work with zero
+  configuration. `SENTRY_DSN` (or an equivalent) is only relevant if a
+  deployment later adopts a real error tracker — see OBSERVABILITY.md's
+  "Adopting a real tracker" section; nothing in this repo reads that
+  variable today.
+- **Log aggregation**: both apps already log structured JSON (pino) to
+  stdout in production (`NODE_ENV=production` disables `pino-pretty` — see
+  `packages/logger`), so a standard container log driver / log-shipping
+  sidecar (CloudWatch, Loki, Datadog Agent, etc.) needs no app-side change
+  to start collecting `requestId`/`organizationId`/`jobId`-correlated logs.
