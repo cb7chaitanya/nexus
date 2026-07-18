@@ -247,6 +247,13 @@ enum DocumentStatus {
   PROCESSING
   READY
   FAILED
+  // Soft-delete only — see DELETE /documents/:id. The row itself is kept
+  // (audit trail: who uploaded what, when, and when it was removed);
+  // only its DocumentChunk rows (vectors) and its S3 object are actually
+  // removed. Excluded from every listing (GET /kb/:id/documents, GET
+  // /kb/:id's stats) but still fetchable by id (GET /documents/:id) —
+  // that's the entire point of preserving the row.
+  DELETED
 }
 
 model Document {
@@ -259,6 +266,14 @@ model Document {
   storageKey      String         @unique // S3/R2 object key
   status          DocumentStatus @default(PENDING_UPLOAD)
   failureReason   String?
+  // Incremented on every POST /documents/:id/retry. Folded into the
+  // ingestion flow's BullMQ jobIds (see apps/api/src/lib/ingestion-flow.ts)
+  // so a retry's jobs never collide with the original (or a prior retry's)
+  // now-terminal jobs still sitting in Redis — reusing a jobId BullMQ
+  // already moved to a terminal state corrupts its internal bookkeeping
+  // rather than cleanly re-running it. Also doubles as audit trail: how
+  // many times has this document actually been retried.
+  retryCount      Int            @default(0)
   uploadedById    String?
   createdAt       DateTime       @default(now())
   // Needed for stuck-job recovery (apps/worker's sweep-stuck-documents):
@@ -268,6 +283,10 @@ model Document {
   // original createdAt. Auto-updated on every status transition.
   updatedAt       DateTime       @updatedAt
   processedAt     DateTime?
+  // Set exactly once, by DELETE /documents/:id — distinct from updatedAt
+  // (which every status transition bumps) so "was this deleted, and when"
+  // is unambiguous audit trail rather than inferred from status alone.
+  deletedAt       DateTime?
 
   organization  Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   knowledgeBase KnowledgeBase   @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
