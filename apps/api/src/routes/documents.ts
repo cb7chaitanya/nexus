@@ -6,7 +6,7 @@ import { DOCUMENT_METADATA_BODY_LIMIT_BYTES } from "../lib/body-limits.js";
 import { enqueueDocumentIngestion } from "../lib/ingestion-flow.js";
 import { requireMembership } from "../lib/membership.js";
 import { checkDocumentQuota, checkIngestionRateLimit } from "../lib/rate-limit.js";
-import { deleteObjects, objectExists } from "../lib/storage.js";
+import { deleteObjects, getObjectMetadata } from "../lib/storage.js";
 import { requireAuth } from "../plugins/auth-guard.js";
 
 export async function documentRoutes(app: FastifyInstance): Promise<void> {
@@ -49,12 +49,29 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
         );
       }
 
-      // Object exists: the client's claim that it finished the S3/R2 PUT
-      // is verified against the bucket, not trusted.
-      const uploaded = await objectExists(document.storageKey);
-      if (!uploaded) {
+      // Object exists: the client's claim that it finished the upload is
+      // verified against the bucket, not trusted.
+      const metadata = await getObjectMetadata(document.storageKey);
+      if (!metadata) {
         throw ApiError.conflict(
           "No uploaded object found for this document — the upload may not have completed",
+        );
+      }
+
+      // Size: the "otherwise" backstop (see lib/storage.ts's
+      // createPresignedUpload doc comment) — the presigned POST's own
+      // content-length-range condition is the primary defense and
+      // should already have refused anything over document.sizeBytes at
+      // upload time, so reaching this branch means that defense was
+      // somehow bypassed or didn't apply (a provider that doesn't honor
+      // the policy, bytes written by some path other than the sanctioned
+      // presigned POST). Either way: never queue an object whose actual
+      // size disagrees with what was declared, and don't leave the
+      // oversized object sitting in the bucket once caught.
+      if (metadata.sizeBytes > document.sizeBytes) {
+        await deleteObjects([document.storageKey]);
+        throw ApiError.conflict(
+          `Uploaded object (${metadata.sizeBytes} bytes) exceeds the declared size (${document.sizeBytes} bytes) — it has been removed. Re-upload with an accurate declared size.`,
         );
       }
 

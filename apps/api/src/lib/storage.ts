@@ -1,14 +1,7 @@
 import { randomUUID } from "node:crypto";
 
-import {
-  CreateBucketCommand,
-  DeleteObjectsCommand,
-  HeadBucketCommand,
-  HeadObjectCommand,
-  PutObjectCommand,
-  S3Client,
-} from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { CreateBucketCommand, DeleteObjectsCommand, HeadBucketCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
 
 import { env } from "../env.js";
 
@@ -57,27 +50,68 @@ export function buildStorageKey(organizationId: string, knowledgeBaseId: string,
   return `${organizationId}/${knowledgeBaseId}/${randomUUID()}-${safeName}`;
 }
 
-export async function createPresignedUploadUrl(
-  key: string,
-  contentType: string,
-): Promise<{ url: string; expiresAt: Date }> {
-  const command = new PutObjectCommand({ Bucket: env.S3_BUCKET, Key: key, ContentType: contentType });
-  const url = await getSignedUrl(s3, command, { expiresIn: PRESIGN_TTL_SECONDS });
-  return { url, expiresAt: new Date(Date.now() + PRESIGN_TTL_SECONDS * 1000) };
+export interface PresignedUpload {
+  url: string;
+  fields: Record<string, string>;
+  expiresAt: Date;
+}
+
+/**
+ * Presigned POST, not a presigned PUT — deliberately: a PUT URL's SigV4
+ * query-string signature has no way to bind Content-Length, so nothing
+ * stops a client from PUTting arbitrarily more bytes than it declared at
+ * presign time (this was the actual gap this function used to leave
+ * open). An S3 POST policy's `content-length-range` condition is
+ * enforced by the storage backend itself, before the object is ever
+ * created — verified empirically against real MinIO (not assumed from
+ * docs): an out-of-range POST is rejected with a 400 EntityTooLarge and
+ * no object is written at all. Same AWS SDK v3 POST-policy mechanism
+ * works against real S3/R2 in staging/prod, only S3_ENDPOINT differs
+ * (see env.ts).
+ *
+ * `maxSizeBytes` is the caller-declared sizeBytes from the presign
+ * request (see POST /kb/:id/documents/presign), not the platform-wide
+ * MAX_UPLOAD_SIZE_BYTES ceiling — binding the range to what THIS caller
+ * actually claimed is what closes the "declares a small size, uploads
+ * something bigger" gap specifically, not just the platform-wide one
+ * (already enforced separately by presignDocumentSchema's own .max()).
+ */
+export async function createPresignedUpload(key: string, contentType: string, maxSizeBytes: number): Promise<PresignedUpload> {
+  const { url, fields } = await createPresignedPost(s3, {
+    Bucket: env.S3_BUCKET,
+    Key: key,
+    Conditions: [["content-length-range", 1, maxSizeBytes]],
+    Fields: { "Content-Type": contentType },
+    Expires: PRESIGN_TTL_SECONDS,
+  });
+  return { url, fields, expiresAt: new Date(Date.now() + PRESIGN_TTL_SECONDS * 1000) };
+}
+
+/**
+ * Existence + actual size, in one HEAD call. The size half is the
+ * "otherwise" backstop POST /documents/:id/complete relies on: the
+ * content-length-range condition above is the primary defense (nothing
+ * oversized should ever land in the bucket), but this is what catches it
+ * independently if it somehow did anyway — a provider that doesn't honor
+ * the policy, a misconfiguration, or bytes that reached this key by some
+ * path other than the sanctioned presigned POST.
+ */
+export async function getObjectMetadata(key: string): Promise<{ sizeBytes: number } | null> {
+  try {
+    const result = await s3.send(new HeadObjectCommand({ Bucket: env.S3_BUCKET, Key: key }));
+    return { sizeBytes: result.ContentLength ?? 0 };
+  } catch (err) {
+    const name = (err as { name?: string }).name;
+    if (name === "NotFound" || name === "NoSuchKey") {
+      return null;
+    }
+    throw err;
+  }
 }
 
 /** Used by POST /documents/:id/complete to verify the client actually uploaded the bytes. */
 export async function objectExists(key: string): Promise<boolean> {
-  try {
-    await s3.send(new HeadObjectCommand({ Bucket: env.S3_BUCKET, Key: key }));
-    return true;
-  } catch (err) {
-    const name = (err as { name?: string }).name;
-    if (name === "NotFound" || name === "NoSuchKey") {
-      return false;
-    }
-    throw err;
-  }
+  return (await getObjectMetadata(key)) !== null;
 }
 
 // S3's DeleteObjects accepts at most 1000 keys per call.

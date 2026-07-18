@@ -18,7 +18,7 @@ import { requireMembership } from "../lib/membership.js";
 import { paginate } from "../lib/pagination.js";
 import { checkIngestionRateLimit } from "../lib/rate-limit.js";
 import { hasAtLeastRole } from "../lib/roles.js";
-import { buildStorageKey, createPresignedUploadUrl, deleteObjects } from "../lib/storage.js";
+import { buildStorageKey, createPresignedUpload, deleteObjects } from "../lib/storage.js";
 import { requireAuth } from "../plugins/auth-guard.js";
 
 /** ACTIVE-only, 404 otherwise — a KB mid-async-deletion (see DELETE
@@ -146,9 +146,18 @@ export async function knowledgeBaseRoutes(app: FastifyInstance): Promise<void> {
         });
       });
 
-      const { url, expiresAt } = await createPresignedUploadUrl(document.storageKey, document.mimeType);
+      // maxSizeBytes is THIS caller's own declared input.sizeBytes, not
+      // the platform-wide MAX_UPLOAD_SIZE_BYTES ceiling — see
+      // createPresignedUpload's doc comment for why that's the whole
+      // point (binds the storage-level enforcement to what was actually
+      // declared, not just the platform maximum).
+      const { url, fields, expiresAt } = await createPresignedUpload(document.storageKey, document.mimeType, input.sizeBytes);
 
-      reply.status(201).send({ document, uploadUrl: url, uploadUrlExpiresAt: expiresAt });
+      // Presigned POST, not a presigned PUT (see createPresignedUpload) —
+      // the client must POST a multipart/form-data request to `uploadUrl`
+      // with every entry of `uploadFields` included as its own form
+      // field, plus the file itself under a field named "file".
+      reply.status(201).send({ document, uploadUrl: url, uploadFields: fields, uploadUrlExpiresAt: expiresAt });
     },
   );
 
