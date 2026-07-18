@@ -164,6 +164,13 @@ services:
       STUCK_DOCUMENT_THRESHOLD_MS: ${STUCK_DOCUMENT_THRESHOLD_MS:-1800000}
       STUCK_DOCUMENT_SWEEP_INTERVAL_MS: ${STUCK_DOCUMENT_SWEEP_INTERVAL_MS:-300000}
       STUCK_DOCUMENT_AUTO_RETRY: ${STUCK_DOCUMENT_AUTO_RETRY:-false}
+      WORKER_HEALTH_PORT: ${WORKER_HEALTH_PORT:-3001}
+      WORKER_HEALTH_HOST: 0.0.0.0
+      # Optional — an unset URL selects a no-op notifier (see
+      # apps/worker/src/lib/notifications/index.ts) rather than failing
+      # to start. Set to a real receiver to get job-failure alerts.
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      ALERT_WEBHOOK_TIMEOUT_MS: ${ALERT_WEBHOOK_TIMEOUT_MS:-5000}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
       migrate:

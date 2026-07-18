@@ -3,7 +3,11 @@ import { createLogger } from "@raas/logger";
 import { Queue, Worker } from "bullmq";
 
 import { env } from "./env.js";
+import { startHealthServer } from "./health-server.js";
+import { recordJobSuccess } from "./lib/health-state.js";
+import { handleJobFailure } from "./lib/job-failure-alerts.js";
 import { createJobLogger } from "./lib/job-logger.js";
+import { createNotifier } from "./lib/notifications/index.js";
 import { redisConnection } from "./lib/redis.js";
 import { chunkTextProcessor } from "./processors/chunk-text.js";
 import { cleanupKnowledgeBaseProcessor } from "./processors/cleanup-knowledge-base.js";
@@ -82,24 +86,35 @@ async function main(): Promise<void> {
   });
 
   const workers = [processingWorker, extractionWorker, embeddingWorker, sweepWorker, kbCleanupWorker];
+
+  // See notifications/index.ts: selects WebhookNotifier when
+  // ALERT_WEBHOOK_URL is configured, a no-op otherwise. Constructed once
+  // and shared across every queue's "failed" handler below, same as the
+  // provider singletons elsewhere in this file.
+  const notifier = createNotifier();
+
   for (const worker of workers) {
+    // job-failure-alerts.ts owns both the existing per-attempt log line
+    // and the new "permanently failed -> notify" decision — see its own
+    // doc comment for why job.finishedOn (not attemptsMade arithmetic
+    // redone here) is what determines "permanently".
     worker.on("failed", (job, err) => {
-      // job.data's shape varies by queue (extraction/chunking/embedding
-      // jobs carry organizationId/documentId; sweep jobs carry neither,
-      // since one sweep job spans many documents — see
-      // sweep-stuck-documents.ts's own per-document logging for that
-      // case). Reading them off optionally here is what makes this one
-      // handler cover every queue consistently instead of one per queue.
-      const data = job?.data as { organizationId?: string; documentId?: string } | undefined;
-      createJobLogger({ jobId: job?.id, organizationId: data?.organizationId, documentId: data?.documentId }).error(
-        { jobName: job?.name, err },
-        "job failed",
-      );
+      void handleJobFailure(notifier, job, err);
+    });
+    worker.on("completed", () => {
+      recordJobSuccess();
     });
   }
 
+  const healthServer = startHealthServer(
+    { queues: [documentEmbeddingQueue, documentSweepQueue], workers },
+    env.WORKER_HEALTH_PORT,
+    env.WORKER_HEALTH_HOST,
+  );
+
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, "worker shutting down");
+    await new Promise<void>((resolve) => healthServer.close(() => resolve()));
     await Promise.all(workers.map((w) => w.close()));
     await documentEmbeddingQueue.close();
     await documentSweepQueue.close();
@@ -111,7 +126,11 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
   logger.info(
-    { sweepIntervalMs: env.STUCK_DOCUMENT_SWEEP_INTERVAL_MS, sweepThresholdMs: env.STUCK_DOCUMENT_THRESHOLD_MS },
+    {
+      sweepIntervalMs: env.STUCK_DOCUMENT_SWEEP_INTERVAL_MS,
+      sweepThresholdMs: env.STUCK_DOCUMENT_THRESHOLD_MS,
+      healthPort: env.WORKER_HEALTH_PORT,
+    },
     "worker ready — listening on document-processing, document-extraction, document-embedding, document-sweep, kb-cleanup",
   );
 }

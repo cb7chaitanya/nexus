@@ -4,12 +4,12 @@
 #   docker build -f apps/worker/Dockerfile -t raas-worker .
 #
 # Same pruner/builder/runner shape as apps/api/Dockerfile — see that
-# file's header comment for the reasoning. The one difference: the worker
-# has no HTTP server (it's a pure BullMQ consumer, see
-# docs/architecture.md), so there's no port for an orchestrator to probe.
-# HEALTHCHECK instead runs apps/worker/src/healthcheck.ts (compiled to
-# dist/healthcheck.js) — a real Redis PING on the same connection the
-# worker itself runs on, not a fake always-succeeds check.
+# file's header comment for the reasoning. The worker now runs a small
+# internal HTTP server (see src/health-server.ts) purely for GET /health —
+# not published to the host by default (see docker-compose.prod.yml),
+# reachable only inside the compose network / by Docker's own HEALTHCHECK
+# below, which checks real Redis + BullMQ queue connectivity, not a fake
+# always-succeeds response.
 #
 # Verified locally end-to-end against the docker-compose dev stack: boots,
 # connects to Redis, logs "worker ready", runs as a non-root uid, and
@@ -41,6 +41,7 @@ WORKDIR /app
 COPY --from=builder --chown=workeruser:raas /app .
 USER workeruser
 ENV NODE_ENV=production
+EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD ["node", "apps/worker/dist/healthcheck.js"]
+  CMD ["node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
 CMD ["node", "apps/worker/dist/index.js"]

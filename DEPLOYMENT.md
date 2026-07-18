@@ -35,6 +35,8 @@ guards) — there is no way to silently deploy with a blank secret.
 | `SESSION_TTL_SECONDS` | no (604800 = 7 days) | api | |
 | `RATE_LIMIT_*`, `CHAT_HISTORY_MESSAGE_LIMIT`, `KB_DELETION_ASYNC_CHUNK_THRESHOLD` | no | api | Platform-wide defaults; per-organization overrides live in the `OrganizationUsageLimit` table, not in env. |
 | `OPENAI_EMBEDDING_BATCH_SIZE`, `WORKER_LOCK_DURATION_MS`, `WORKER_STALLED_INTERVAL_MS`, `STUCK_DOCUMENT_THRESHOLD_MS`, `STUCK_DOCUMENT_SWEEP_INTERVAL_MS`, `STUCK_DOCUMENT_AUTO_RETRY` | no | worker | Tuning knobs; defaults are fine for most deployments. |
+| `WORKER_HEALTH_PORT` | no (`3001`) | worker | `GET /health` — internal only, not published to the host (see `docker-compose.prod.yml`). |
+| `ALERT_WEBHOOK_URL`, `ALERT_WEBHOOK_TIMEOUT_MS` | no | worker | Job-failure alerting (see `apps/worker/src/lib/notifications/`). Unset URL selects a no-op notifier — alerting is optional, not load-bearing for the worker to start. |
 | `LOG_LEVEL` | no (`info`) | api, worker | |
 
 Full annotated defaults for every optional variable are in
@@ -59,9 +61,12 @@ Full annotated defaults for every optional variable are in
    there; `api`/`worker` never come up against a schema they don't match.
 3. **`api`** and **`worker`** start once `migrate` has succeeded and
    `redis`/`object-storage` are healthy. Each has its own Docker
-   `HEALTHCHECK` (`GET /health/live` for the API; a real Redis `PING` via
-   `apps/worker/src/healthcheck.ts` for the worker, which has no HTTP
-   server of its own).
+   `HEALTHCHECK` — `GET /health/live` for the API, `GET /health` for the
+   worker (`apps/worker/src/health-server.ts`; checks real Redis and
+   BullMQ queue connectivity, not a fake always-succeeds response). Both
+   ports are internal-only (see the `WORKER_HEALTH_PORT` note above) —
+   reachable inside the compose network and by Docker's own HEALTHCHECK,
+   not published to the host.
 4. **`web`** starts once `api`'s container exists (it has no hard runtime
    dependency on the API today — the bundled page is a placeholder — but
    the ordering is future-proofed for when it starts calling the API).

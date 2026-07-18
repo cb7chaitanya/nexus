@@ -59,5 +59,22 @@ export const env = {
   // modes of its own (see sweep-stuck-documents.ts's doc comment) and
   // should be an explicit operational choice, not a silent default.
   STUCK_DOCUMENT_AUTO_RETRY: process.env.STUCK_DOCUMENT_AUTO_RETRY === "true",
+  // GET /health (see health-server.ts) — an orchestrator readiness probe,
+  // not internet-facing traffic; not published to the host by default in
+  // docker-compose.prod.yml, only reachable inside the compose network /
+  // by Docker's own HEALTHCHECK. Distinct from apps/api's API_PORT so
+  // both processes can run on the same host without colliding.
+  WORKER_HEALTH_PORT: Number(process.env.WORKER_HEALTH_PORT ?? 3001),
+  WORKER_HEALTH_HOST: process.env.WORKER_HEALTH_HOST ?? "0.0.0.0",
+  // Failure alerting (see lib/notifications/) — optional on purpose:
+  // alerting is an operational nice-to-have, not load-bearing for the
+  // pipeline to function, so an unset URL selects a no-op notifier (see
+  // lib/notifications/index.ts's createNotifier) rather than failing to
+  // start. Only ever read by that one factory function — nothing else in
+  // this codebase should reach for this var directly, so a future
+  // Slack/PagerDuty/Sentry notifier stays a config change there, not a
+  // call-site change everywhere a failure can happen.
+  ALERT_WEBHOOK_URL: process.env.ALERT_WEBHOOK_URL,
+  ALERT_WEBHOOK_TIMEOUT_MS: Number(process.env.ALERT_WEBHOOK_TIMEOUT_MS ?? 5000),
   NODE_ENV: process.env.NODE_ENV ?? "development",
 };
