@@ -23,6 +23,20 @@ export interface EnqueueDocumentIngestionInput {
   documentId: string;
   organizationId: string;
   knowledgeBaseId: string;
+  /**
+   * 0 for the original enqueue (POST /documents/:id/complete), the
+   * document's post-increment Document.retryCount for a retry (POST
+   * /documents/:id/retry) — see that route. Folded into every jobId
+   * below so a retry never collides with the original attempt's (or an
+   * earlier retry's) jobs, which — even failed — still exist in Redis
+   * (removeOnFail keeps up to 5000). Reusing a jobId BullMQ has already
+   * moved to a terminal state doesn't cleanly restart it; it overwrites
+   * that job's Redis hash while leaving stale bookkeeping (e.g. its
+   * "failed" zset membership) pointing at what's now actually a fresh,
+   * active job — verified against addStandardJob's Lua script, which
+   * unconditionally HSETs the jobId key with no existence check.
+   */
+  attempt?: number;
 }
 
 /**
@@ -33,12 +47,15 @@ export interface EnqueueDocumentIngestionInput {
  * dynamically as additional children of process-document once it knows how
  * many batches there are (see apps/worker's processors/chunk-text.ts).
  *
- * Deterministic jobIds (keyed on documentId) make this idempotent: calling
- * this twice for the same document reuses the existing flow rather than
- * creating a duplicate one. In practice POST /documents/:id/complete
- * already prevents a second call (its own PENDING_UPLOAD -> QUEUED
- * transition check returns 409), so this is defense in depth, not the
- * only thing preventing a double-enqueue.
+ * Deterministic jobIds (keyed on documentId + attempt) make a single
+ * attempt idempotent: calling this twice with the same (documentId,
+ * attempt) pair reuses the existing flow rather than creating a duplicate
+ * one. In practice POST /documents/:id/complete and POST
+ * /documents/:id/retry both already prevent calling this twice for the
+ * same attempt (their own status-transition checks return 409 on a second
+ * call), so this is defense in depth, not the only thing preventing a
+ * double-enqueue. A *different* attempt (a retry) is deliberately NOT
+ * idempotent against the original — see `attempt` above.
  */
 export async function enqueueDocumentIngestion(input: EnqueueDocumentIngestionInput): Promise<void> {
   const data = {
@@ -46,6 +63,11 @@ export async function enqueueDocumentIngestion(input: EnqueueDocumentIngestionIn
     documentId: input.documentId,
     knowledgeBaseId: input.knowledgeBaseId,
   };
+
+  // Empty string for attempt 0 (the common case) so the original
+  // enqueue's jobIds are textually identical to what they were before
+  // `attempt` existed — no behavior change for POST /documents/:id/complete.
+  const suffix = input.attempt ? `-retry-${input.attempt}` : "";
 
   // jobId is namespaced by job name, not just documentId — chunk-text and
   // extract-text both run on QUEUE_NAMES.extraction, and BullMQ dedups
@@ -57,19 +79,19 @@ export async function enqueueDocumentIngestion(input: EnqueueDocumentIngestionIn
     name: JOB_NAMES.processDocument,
     queueName: QUEUE_NAMES.processing,
     data,
-    opts: { ...JOB_OPTS, jobId: `${JOB_NAMES.processDocument}-${input.documentId}` },
+    opts: { ...JOB_OPTS, jobId: `${JOB_NAMES.processDocument}-${input.documentId}${suffix}` },
     children: [
       {
         name: JOB_NAMES.chunkText,
         queueName: QUEUE_NAMES.extraction,
         data,
-        opts: { ...JOB_OPTS, jobId: `${JOB_NAMES.chunkText}-${input.documentId}` },
+        opts: { ...JOB_OPTS, jobId: `${JOB_NAMES.chunkText}-${input.documentId}${suffix}` },
         children: [
           {
             name: JOB_NAMES.extractText,
             queueName: QUEUE_NAMES.extraction,
             data,
-            opts: { ...JOB_OPTS, jobId: `${JOB_NAMES.extractText}-${input.documentId}` },
+            opts: { ...JOB_OPTS, jobId: `${JOB_NAMES.extractText}-${input.documentId}${suffix}` },
           },
         ],
       },
