@@ -196,4 +196,99 @@ describe("conversation routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json().data).toEqual([]);
   });
+
+  describe("DELETE /conversations/:id", () => {
+    it("requires authentication", async () => {
+      const response = await app.inject({
+        method: "DELETE",
+        url: `/conversations/${conversationIds[0]}?organizationId=${organizationId}`,
+      });
+      expect(response.statusCode).toBe(401);
+    });
+
+    it("returns 404 for a caller who isn't a member of the conversation's organization", async () => {
+      const response = await app.inject({
+        method: "DELETE",
+        url: `/conversations/${conversationIds[0]}?organizationId=${organizationId}`,
+        cookies: { [SESSION_COOKIE_NAME]: outsiderCookie },
+      });
+      expect(response.statusCode).toBe(404);
+    });
+
+    it("never deletes another organization's conversation, even scoped by the outsider's own real organizationId", async () => {
+      const response = await app.inject({
+        method: "DELETE",
+        url: `/conversations/${conversationIds[0]}?organizationId=${outsiderOrganizationId}`,
+        cookies: { [SESSION_COOKIE_NAME]: outsiderCookie },
+      });
+      expect(response.statusCode).toBe(404);
+
+      // Untouched — still fetchable by its real owner afterward.
+      const stillThere = await app.inject({
+        method: "GET",
+        url: `/conversations/${conversationIds[0]}?organizationId=${organizationId}`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      });
+      expect(stillThere.statusCode).toBe(200);
+    });
+
+    it("returns 404 for a conversation id that doesn't exist", async () => {
+      const response = await app.inject({
+        method: "DELETE",
+        url: `/conversations/${randomUUID()}?organizationId=${organizationId}`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      });
+      expect(response.statusCode).toBe(404);
+    });
+
+    it("deletes the conversation and cascades its messages, then 404s on GET and on a second delete", async () => {
+      // Reuse a fixture conversation's userId/knowledgeBaseId rather than
+      // looking either up separately — this suite already established
+      // both are valid, real rows scoped to this org.
+      const template = await withTenantTransaction(organizationId, (tx) =>
+        tx.conversation.findUniqueOrThrow({ where: { id: conversationIds[0] } }),
+      );
+
+      const conversation = await withTenantTransaction(organizationId, (tx) =>
+        tx.conversation.create({
+          data: {
+            organizationId,
+            userId: template.userId,
+            knowledgeBaseId: template.knowledgeBaseId,
+            title: "To be deleted",
+          },
+        }),
+      );
+
+      await withTenantTransaction(organizationId, (tx) =>
+        tx.message.create({ data: { organizationId, conversationId: conversation.id, role: "USER", content: "hello" } }),
+      );
+
+      const del = await app.inject({
+        method: "DELETE",
+        url: `/conversations/${conversation.id}?organizationId=${organizationId}`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      });
+      expect(del.statusCode).toBe(204);
+
+      const messagesAfterDelete = await withTenantTransaction(organizationId, (tx) =>
+        tx.message.findMany({ where: { conversationId: conversation.id } }),
+      );
+      expect(messagesAfterDelete).toHaveLength(0);
+
+      const getAfterDelete = await app.inject({
+        method: "GET",
+        url: `/conversations/${conversation.id}?organizationId=${organizationId}`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      });
+      expect(getAfterDelete.statusCode).toBe(404);
+
+      const secondDelete = await app.inject({
+        method: "DELETE",
+        url: `/conversations/${conversation.id}?organizationId=${organizationId}`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      });
+      expect(secondDelete.statusCode).toBe(404);
+    });
+  });
 });
