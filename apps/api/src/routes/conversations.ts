@@ -75,4 +75,31 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
 
     reply.send(paginate(messages, input.limit));
   });
+
+  app.delete("/conversations/:id", { preHandler: requireAuth }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const input = parseOrThrow(getConversationQuerySchema, request.query);
+    const userId = request.userId;
+    if (!userId) throw ApiError.unauthorized();
+
+    await requireMembership(request, input.organizationId, userId);
+
+    // Ownership: scoped to this org's tenant context, matching every other
+    // conversation route above — RLS makes a conversation id belonging to
+    // another org indistinguishable from a nonexistent one. Messages
+    // cascade at the DB level (Message.conversationId is onDelete: Cascade
+    // in schema.prisma) — no S3 object or other external resource is ever
+    // tied to a conversation, so unlike DELETE /kb/:id this never needs an
+    // async worker path: Postgres removes the FK-cascaded Message rows as
+    // part of the same DELETE statement, not a per-row application loop.
+    await withTenantTransaction(input.organizationId, async (tx) => {
+      const existing = await tx.conversation.findUnique({ where: { id } });
+      if (!existing) {
+        throw ApiError.notFound("Conversation not found");
+      }
+      await tx.conversation.delete({ where: { id } });
+    });
+
+    reply.status(204).send();
+  });
 }
