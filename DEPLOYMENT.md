@@ -36,8 +36,15 @@ guards) — there is no way to silently deploy with a blank secret.
 | `S3_ENDPOINT`, `S3_REGION`, `S3_FORCE_PATH_STYLE` | no | api, worker | Point at a real S3/R2 provider instead of the bundled MinIO by setting these and deleting the `object-storage` service — no code change either way. |
 | `API_PORT`, `WEB_PORT` | no (4000 / 3000) | api, web | Host ports published by compose. |
 | `SESSION_TTL_SECONDS` | no (604800 = 7 days) | api | |
+| `MAX_COMPLETION_TOKENS` | no (`1024`) | api | Hard per-request ceiling on chat completion output tokens — the real per-request cost backstop. |
+| `API_SHUTDOWN_TIMEOUT_MS` | no (`25000`) | api | How long SIGTERM/SIGINT waits for an in-progress chat SSE stream to finish. Must stay below the `api` service's `stop_grace_period` (`30s`) — see [First staging deployment](#first-staging-deployment). |
 | `RATE_LIMIT_*`, `CHAT_HISTORY_MESSAGE_LIMIT`, `KB_DELETION_ASYNC_CHUNK_THRESHOLD` | no | api | Platform-wide defaults; per-organization overrides live in the `OrganizationUsageLimit` table, not in env. |
-| `OPENAI_EMBEDDING_BATCH_SIZE`, `WORKER_LOCK_DURATION_MS`, `WORKER_STALLED_INTERVAL_MS`, `STUCK_DOCUMENT_THRESHOLD_MS`, `STUCK_DOCUMENT_SWEEP_INTERVAL_MS`, `STUCK_DOCUMENT_AUTO_RETRY` | no | worker | Tuning knobs; defaults are fine for most deployments. |
+| `OPENAI_EMBEDDING_BATCH_SIZE`, `WORKER_LOCK_DURATION_MS`, `WORKER_STALLED_INTERVAL_MS`, `STUCK_DOCUMENT_THRESHOLD_MS`, `STUCK_DOCUMENT_SWEEP_INTERVAL_MS`, `STUCK_DOCUMENT_AUTO_RETRY`, `STUCK_DOCUMENT_MAX_AUTO_RETRIES` | no | worker | Tuning knobs; defaults are fine for most deployments. |
+| `WORKER_MAX_DOCUMENT_BYTES` | no (`209715200` = 200 MiB) | worker | Per-document in-memory guardrail during extraction. Multiplied by `WORKER_EXTRACTION_CONCURRENCY` for this worker's worst-case concurrent memory use — size both against the container's real memory limit. |
+| `WORKER_PROCESSING_CONCURRENCY`, `WORKER_EXTRACTION_CONCURRENCY`, `WORKER_EMBEDDING_CONCURRENCY`, `WORKER_SWEEP_CONCURRENCY`, `WORKER_KB_CLEANUP_CONCURRENCY` | no (`10`/`4`/`2`/`1`/`2`) | worker | Per-queue BullMQ concurrency. |
+| `WORKER_MAX_JOB_DURATION_MS` | no (`600000` = 10 min) | worker | Outermost per-job-attempt wall-clock ceiling. |
+| `WORKER_SHUTDOWN_TIMEOUT_MS` | no (`25000`) | worker | How long SIGTERM/SIGINT waits for active jobs to finish. Must stay below the `worker` service's `stop_grace_period` (`30s`) — see [First staging deployment](#first-staging-deployment). |
+| `WORKER_REDIS_CONNECT_TIMEOUT_MS` | no (`10000`) | worker | Bounds the startup Redis PING-or-fail check. |
 | `WORKER_HEALTH_PORT` | no (`3001`) | worker | `GET /health` — internal only, not published to the host (see `docker-compose.prod.yml`). |
 | `ALERT_WEBHOOK_URL`, `ALERT_WEBHOOK_TIMEOUT_MS` | no | worker | Job-failure alerting (see `apps/worker/src/lib/notifications/`). Unset URL selects a no-op notifier — alerting is optional, not load-bearing for the worker to start. |
 | `LOG_LEVEL` | no (`info`) | api, worker | |
@@ -117,6 +124,91 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod exec postgres \
 running once per database — it's a role-level `ALTER`, not tied to any
 particular connection or container, and survives container
 restarts/redeploys from then on.
+
+## First staging deployment
+
+This section is specific to standing the stack up for the *first* time on
+a host that has never run it — steady-state redeploys only need
+[Deployment order](#deployment-order) below.
+
+### Pre-flight checklist
+
+- [ ] `.env.prod` created from `.env.prod.example`, every `CHANGE_ME`
+  replaced with a real value — `POSTGRES_PASSWORD` and
+  `POSTGRES_APP_PASSWORD` are **different** secrets (see the env var
+  table above for why: a shared value would be a copy/paste of a
+  superuser password into a role that must never have superuser-level
+  access).
+- [ ] `WEB_ORIGIN` is the real staging URL, not a placeholder — a wrong
+  value here doesn't fail loudly, it silently breaks every credentialed
+  request from the web app (CORS rejection in the browser, not a
+  server-side error).
+- [ ] `OPENAI_API_KEY` is a real key (unless deliberately staging with
+  `EMBEDDING_PROVIDER=fake`/`LLM_PROVIDER=fake` — a legitimate choice for
+  a first smoke-test pass with zero OpenAI cost, see `.env.prod.example`,
+  but never for anything meant to look/behave like production).
+- [ ] DNS/reverse proxy/TLS termination in front of `api` and `web` is
+  already provisioned — this compose stack is application-tier only (see
+  the top-of-file comment in `docker-compose.prod.yml`); it does not
+  terminate TLS or handle a public hostname itself.
+- [ ] The host has enough free memory for `WORKER_EXTRACTION_CONCURRENCY
+  × WORKER_MAX_DOCUMENT_BYTES` (defaults: `4 × 200 MiB` = 800 MiB worst
+  case, on top of Node's own baseline) plus Postgres/Redis/MinIO's own
+  footprint.
+- [ ] If Postgres will be reachable from outside this host for
+  administration, confirm `docker-compose.prod.yml` still doesn't publish
+  its port (it doesn't, by design — see the top-of-file comment) and that
+  any external access goes through a separate, deliberate tunnel/bastion,
+  not a compose change.
+
+### Deploy
+
+Follow [Deployment order](#deployment-order) below for the actual
+`docker compose up` command and what it does at each step.
+
+### Smoke test
+
+Once every service reports `healthy` (`docker compose ... ps`):
+
+1. **Health endpoints respond from inside the network** (they're not
+   published to the host — see [Observability](#observability)):
+   ```bash
+   docker compose -f docker-compose.prod.yml --env-file .env.prod exec api \
+     node -e "fetch('http://127.0.0.1:4000/health').then(r=>r.json()).then(console.log)"
+   docker compose -f docker-compose.prod.yml --env-file .env.prod exec worker \
+     node -e "fetch('http://127.0.0.1:3001/health').then(r=>r.json()).then(console.log)"
+   ```
+   Both should report `"status":"healthy"` with every individual check
+   (`database`/`redis` for api; `redis`/`queues` for worker) also
+   `"healthy"` — a 200 with a `false` top-level status never happens by
+   design (see `apps/api/src/routes/health.ts`), but check the nested
+   checks too, not just the outer status.
+2. **`GET /health/live` on `api`** (published to the host, so reachable
+   directly) confirms the process itself is up regardless of dependency
+   state: `curl -f http://<host>:${API_PORT:-4000}/health/live`.
+3. **A real signup + org creation** through `api` (`POST /auth/signup`)
+   confirms Postgres RLS, session cookies, and the `raas_app` role
+   grants are all correctly wired end to end — not just that Postgres is
+   *reachable* (the health check's `SELECT 1` doesn't exercise RLS at
+   all).
+4. **A real document upload → ingestion → chat round-trip** (through
+   `web`, or directly against `api` if `web` isn't wired up yet) confirms
+   the full chain: presigned upload to MinIO/S3, `worker` picking up the
+   ingestion job (check `worker`'s logs for `"worker ready"` at startup
+   and job-completion log lines), embeddings actually written, and a chat
+   request retrieving them. This is the one step that can't be
+   short-circuited by checking individual services in isolation — it's
+   the only thing that proves the BullMQ handoff between `api` and
+   `worker` actually works against this specific deployment's Redis.
+5. **Logs are structured JSON**, not `pino-pretty` output — confirms
+   `NODE_ENV=production` actually took effect (`docker compose ... logs
+   api worker`).
+
+If any step fails, do not consider this stack "deployed" — work the
+failure from [Deployment order](#deployment-order)'s dependency chain
+(the earliest failing service in that chain is almost always the real
+cause, even if a later service's logs are what you saw first) rather
+than restarting services out of order.
 
 ## Deployment order
 

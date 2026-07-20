@@ -19,8 +19,20 @@ name: raas-prod
 # infrastructure for the application tier, not an edge/ingress layer.
 
 services:
+  # Every image below is pinned to tag@digest, not a bare tag — "pg16",
+  # "7-alpine", and especially "latest" all float forward as upstream
+  # ships new builds, so a plain `docker compose pull` (or a fresh node
+  # that's never cached the image) can silently change what's actually
+  # running underneath an unchanged compose file. The digests here are
+  # exactly what this stack has been built and tested against throughout
+  # this repo's own development (Postgres 16.14 + pgvector 0.8.5, Redis
+  # 7.4.9, MinIO RELEASE.2025-09-07T16-13-09Z) — verified via `docker
+  # image inspect --format '{{json .RepoDigests}}'` against the actually-
+  # running local containers, not copied from a registry page. Bump
+  # deliberately (pull the new tag, re-inspect, update both the tag and
+  # the digest here) rather than silently.
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg16@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
@@ -48,7 +60,7 @@ services:
       retries: 10
 
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
     restart: unless-stopped
     # noeviction — see the identical comment in docker-compose.yml.
     # requirepass: unlike local dev, this Redis instance also backs BullMQ
@@ -74,7 +86,7 @@ services:
     # pointing S3_ENDPOINT/S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY at it
     # instead; no application code change either way (see
     # apps/api/src/lib/storage.ts).
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     restart: unless-stopped
     environment:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is required}
@@ -152,7 +164,27 @@ services:
       RATE_LIMIT_EMBEDDING_TOKEN_BUDGET_DAILY_DEFAULT: ${RATE_LIMIT_EMBEDDING_TOKEN_BUDGET_DAILY_DEFAULT:-2000000}
       CHAT_HISTORY_MESSAGE_LIMIT: ${CHAT_HISTORY_MESSAGE_LIMIT:-20}
       KB_DELETION_ASYNC_CHUNK_THRESHOLD: ${KB_DELETION_ASYNC_CHUNK_THRESHOLD:-5000}
+      # Hard per-request ceiling on completion output tokens (see
+      # @raas/providers's OpenAIChatProvider) — previously only settable
+      # by editing code; this is the actual per-request cost backstop, not
+      # a nominal one. See apps/api/src/env.ts's own comment.
+      MAX_COMPLETION_TOKENS: ${MAX_COMPLETION_TOKENS:-1024}
+      # How long SIGTERM/SIGINT waits for an in-progress chat SSE stream
+      # to finish before forcing exit (see apps/api/src/lib/shutdown.ts) —
+      # previously only settable by editing code, meaning the graceful-
+      # shutdown work done for this deployment was unreachable from
+      # docker-compose.prod.yml. Keep comfortably below whatever
+      # stop_grace_period the orchestrator actually enforces (Docker
+      # Compose's own default is 10s if unset — raise it explicitly if
+      # this default is kept, since 25s > 10s means Compose would SIGKILL
+      # before this timeout fires).
+      API_SHUTDOWN_TIMEOUT_MS: ${API_SHUTDOWN_TIMEOUT_MS:-25000}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+    # Must exceed API_SHUTDOWN_TIMEOUT_MS above (default 25s) or Compose's
+    # own SIGKILL fires first, defeating the graceful-shutdown timeout
+    # entirely — Compose's unset default is 10s. See DEPLOYMENT.md's
+    # "First staging deployment" section.
+    stop_grace_period: 30s
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -192,6 +224,40 @@ services:
       STUCK_DOCUMENT_THRESHOLD_MS: ${STUCK_DOCUMENT_THRESHOLD_MS:-1800000}
       STUCK_DOCUMENT_SWEEP_INTERVAL_MS: ${STUCK_DOCUMENT_SWEEP_INTERVAL_MS:-300000}
       STUCK_DOCUMENT_AUTO_RETRY: ${STUCK_DOCUMENT_AUTO_RETRY:-false}
+      # Ceiling on Document.retryCount before a stuck document is left
+      # permanently FAILED instead of auto-retried again — only consulted
+      # when STUCK_DOCUMENT_AUTO_RETRY is on. See apps/worker/src/env.ts.
+      STUCK_DOCUMENT_MAX_AUTO_RETRIES: ${STUCK_DOCUMENT_MAX_AUTO_RETRIES:-3}
+      # Per-document in-memory guardrail (extract-text.ts) — distinct
+      # from, and lower than, the platform's accepted-upload ceiling; see
+      # apps/worker/src/env.ts's own comment for why. Multiplied by
+      # WORKER_EXTRACTION_CONCURRENCY below for this worker's actual
+      # worst-case concurrent memory use — size both together against
+      # this container's real memory limit.
+      WORKER_MAX_DOCUMENT_BYTES: ${WORKER_MAX_DOCUMENT_BYTES:-209715200}
+      # Per-queue concurrency — see apps/worker/src/env.ts for the
+      # per-queue reasoning (processing cheap/high, extraction
+      # memory-bound, embedding/kb-cleanup I/O-bound, sweep serialized).
+      WORKER_PROCESSING_CONCURRENCY: ${WORKER_PROCESSING_CONCURRENCY:-10}
+      WORKER_EXTRACTION_CONCURRENCY: ${WORKER_EXTRACTION_CONCURRENCY:-4}
+      WORKER_EMBEDDING_CONCURRENCY: ${WORKER_EMBEDDING_CONCURRENCY:-2}
+      WORKER_SWEEP_CONCURRENCY: ${WORKER_SWEEP_CONCURRENCY:-1}
+      WORKER_KB_CLEANUP_CONCURRENCY: ${WORKER_KB_CLEANUP_CONCURRENCY:-2}
+      # Generic per-job-attempt wall-clock ceiling (lib/job-timeout.ts) —
+      # the outermost backstop against a job hung well past any reasonable
+      # duration for its stage. See apps/worker/src/env.ts.
+      WORKER_MAX_JOB_DURATION_MS: ${WORKER_MAX_JOB_DURATION_MS:-600000}
+      # How long SIGTERM/SIGINT waits for active jobs to finish before
+      # forcing exit (lib/shutdown.ts) — previously only settable by
+      # editing code. Same stop_grace_period caveat as api's own
+      # API_SHUTDOWN_TIMEOUT_MS above: must stay below stop_grace_period
+      # below or Compose's SIGKILL fires first.
+      WORKER_SHUTDOWN_TIMEOUT_MS: ${WORKER_SHUTDOWN_TIMEOUT_MS:-25000}
+      # Bounds the startup Redis PING-or-fail check — a misconfigured
+      # REDIS_URL fails loudly within this window instead of hanging
+      # main() forever (ioredis's own default retry behavior has no
+      # ceiling). See apps/worker/src/env.ts.
+      WORKER_REDIS_CONNECT_TIMEOUT_MS: ${WORKER_REDIS_CONNECT_TIMEOUT_MS:-10000}
       WORKER_HEALTH_PORT: ${WORKER_HEALTH_PORT:-3001}
       WORKER_HEALTH_HOST: 0.0.0.0
       # Optional — an unset URL selects a no-op notifier (see
@@ -200,6 +266,10 @@ services:
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
       ALERT_WEBHOOK_TIMEOUT_MS: ${ALERT_WEBHOOK_TIMEOUT_MS:-5000}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+    # Must exceed WORKER_SHUTDOWN_TIMEOUT_MS above (default 25s) — see the
+    # identical note on the api service above and DEPLOYMENT.md's "First
+    # staging deployment" section.
+    stop_grace_period: 30s
     depends_on:
       migrate:
         condition: service_completed_successfully
