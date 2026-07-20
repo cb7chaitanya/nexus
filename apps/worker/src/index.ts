@@ -5,7 +5,9 @@ import {
   documentProcessingDurationSeconds,
   ingestionJobsCompletedTotal,
   ingestionJobsFailedTotal,
+  ingestionJobsRetriedTotal,
   ingestionJobsStartedTotal,
+  registerQueueForMetrics,
 } from "@raas/metrics";
 import { captureException } from "@raas/observability";
 import { Queue, Worker, type Job } from "bullmq";
@@ -152,12 +154,47 @@ async function main(): Promise<void> {
 
   const workers = [processingWorker, extractionWorker, embeddingWorker, sweepWorker, kbCleanupWorker];
 
+  // Standalone Queue handles for processing/extraction/kb-cleanup —
+  // distinct from the Worker objects above (a BullMQ Worker is a
+  // consumer, it doesn't expose getJobCounts()/introspection the way a
+  // Queue does). document-embedding and document-sweep already have their
+  // own Queue instances (documentEmbeddingQueue, above — needed by
+  // processors/chunk-text.ts's own fan-out; documentSweepQueue, needed to
+  // schedule the repeatable sweep job), so only these three are new here.
+  // Exist for two things: queue-depth/active-jobs metrics below, and
+  // widening the health check (below) and graceful-shutdown queue list
+  // (see the shutdown() closure further down) to cover all five queues
+  // instead of two.
+  const documentProcessingQueue = new Queue(QUEUE_NAMES.processing, { connection: redisConnection });
+  const documentExtractionQueue = new Queue(QUEUE_NAMES.extraction, { connection: redisConnection });
+  const kbCleanupQueue = new Queue(QUEUE_NAMES.kbCleanup, { connection: redisConnection });
+  const allQueues = [documentProcessingQueue, documentExtractionQueue, documentEmbeddingQueue, documentSweepQueue, kbCleanupQueue];
+
+  // registerQueueForMetrics (@raas/metrics) — queueDepth/queueActiveJobs
+  // sample every registered queue's real BullMQ state at each /metrics
+  // scrape (see that package's queue-metrics.ts for why this is a
+  // registration + pull model rather than event-driven like the counters
+  // below). Every queue this worker owns, not just the ingestion three —
+  // depth/active-jobs is meaningful operational signal for sweep and
+  // kb-cleanup too.
+  for (const queue of allQueues) {
+    registerQueueForMetrics(queue);
+  }
+
   // See notifications/index.ts: selects WebhookNotifier when
   // ALERT_WEBHOOK_URL is configured, a no-op otherwise. Constructed once
   // and shared across every queue's "failed" handler below, same as the
   // provider singletons elsewhere in this file.
   const notifier = createNotifier();
 
+  // Every worker this process runs, not just the ingestion pipeline three
+  // — completed/failed/duration/retry signal is meaningful for the sweep
+  // and kb-cleanup maintenance workers too, and this loop is what closes
+  // that gap (previously only processing/extraction/embedding were wired
+  // into @raas/metrics's counters/histograms at all). Pure event
+  // listeners on top of BullMQ's own Worker lifecycle events — no
+  // processor file is touched, so this cannot change what any of them
+  // decide, only observe it after the fact.
   for (const worker of workers) {
     // job-failure-alerts.ts owns both the existing per-attempt log line
     // and the new "permanently failed -> notify" decision — see its own
@@ -165,26 +202,25 @@ async function main(): Promise<void> {
     // redone here) is what determines "permanently".
     worker.on("failed", (job, err) => {
       void handleJobFailure(notifier, job, err);
+      if (job) {
+        ingestionJobsFailedTotal.inc({ queue: job.queueName, job_name: job.name });
+        // Distinct counter from the one above — see
+        // @raas/metrics's ingestionJobsRetriedTotal doc comment. Same
+        // "has BullMQ already decided not to retry" signal
+        // job-failure-alerts.ts's own finishedOn check uses, checked
+        // independently here rather than threading a boolean out of that
+        // async call, since this increment has to happen synchronously
+        // in the same event tick regardless of how long notifying takes.
+        if (!job.finishedOn) {
+          ingestionJobsRetriedTotal.inc({ queue: job.queueName, job_name: job.name });
+        }
+      }
     });
-    worker.on("completed", () => {
-      recordJobSuccess();
-    });
-  }
-
-  // Ingestion job metrics (@raas/metrics) — scoped to the three workers
-  // that make up the actual document-ingestion pipeline (processing,
-  // extraction, embedding), not the sweep/kb-cleanup maintenance workers
-  // above: "ingestion jobs started/completed/failed" means this pipeline
-  // specifically, not every BullMQ job this process ever runs. Pure event
-  // listeners on top of BullMQ's own Worker lifecycle events — no
-  // processor file is touched, so this cannot change what any of them
-  // decide, only observe it after the fact.
-  const ingestionWorkers = [processingWorker, extractionWorker, embeddingWorker];
-  for (const worker of ingestionWorkers) {
     worker.on("active", (job) => {
       ingestionJobsStartedTotal.inc({ queue: job.queueName, job_name: job.name });
     });
     worker.on("completed", (job) => {
+      recordJobSuccess();
       ingestionJobsCompletedTotal.inc({ queue: job.queueName, job_name: job.name });
       if (job.processedOn && job.finishedOn) {
         documentProcessingDurationSeconds.observe({ queue: job.queueName, job_name: job.name }, (job.finishedOn - job.processedOn) / 1000);
@@ -199,18 +235,9 @@ async function main(): Promise<void> {
         documentIngestionDurationSeconds.observe((job.finishedOn - job.timestamp) / 1000);
       }
     });
-    worker.on("failed", (job) => {
-      if (job) {
-        ingestionJobsFailedTotal.inc({ queue: job.queueName, job_name: job.name });
-      }
-    });
   }
 
-  const healthServer = startHealthServer(
-    { queues: [documentEmbeddingQueue, documentSweepQueue], workers },
-    env.WORKER_HEALTH_PORT,
-    env.WORKER_HEALTH_HOST,
-  );
+  const healthServer = startHealthServer({ queues: allQueues, workers }, env.WORKER_HEALTH_PORT, env.WORKER_HEALTH_HOST);
 
   // Idempotency guard: a second SIGTERM/SIGINT arriving while the first is
   // still draining (a human resending it, or both signals arriving close
@@ -229,7 +256,7 @@ async function main(): Promise<void> {
       logger.info({ reason }, "worker shutting down");
       const { drainedGracefully } = await gracefulShutdown({
         workers,
-        queues: [documentEmbeddingQueue, documentSweepQueue],
+        queues: allQueues,
         redisConnection,
         healthServer,
         timeoutMs: env.WORKER_SHUTDOWN_TIMEOUT_MS,
