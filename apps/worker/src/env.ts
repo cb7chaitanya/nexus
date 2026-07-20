@@ -59,6 +59,12 @@ export const env = {
   // modes of its own (see sweep-stuck-documents.ts's doc comment) and
   // should be an explicit operational choice, not a silent default.
   STUCK_DOCUMENT_AUTO_RETRY: process.env.STUCK_DOCUMENT_AUTO_RETRY === "true",
+  // Ceiling on Document.retryCount (the same field POST /documents/:id/retry
+  // increments) before a stuck document is left permanently FAILED instead
+  // of being auto-retried again — closes the "genuinely malformed document
+  // gets re-enqueued forever" gap STUCK_DOCUMENT_AUTO_RETRY's own doc
+  // comment names. Only consulted when STUCK_DOCUMENT_AUTO_RETRY is on.
+  STUCK_DOCUMENT_MAX_AUTO_RETRIES: Number(process.env.STUCK_DOCUMENT_MAX_AUTO_RETRIES ?? 3),
   // GET /health (see health-server.ts) — an orchestrator readiness probe,
   // not internet-facing traffic; not published to the host by default in
   // docker-compose.prod.yml, only reachable inside the compose network /

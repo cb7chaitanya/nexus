@@ -39,10 +39,16 @@ describe("sweepStuckDocuments", () => {
     await prisma.organization.delete({ where: { id: orgB.id } }).catch(() => undefined);
   });
 
-  async function createDocument(orgId: string, kbId: string, status: "QUEUED" | "PROCESSING", backdateMs: number): Promise<string> {
+  async function createDocument(
+    orgId: string,
+    kbId: string,
+    status: "QUEUED" | "PROCESSING",
+    backdateMs: number,
+    retryCount = 0,
+  ): Promise<string> {
     const doc = await withTenantTransaction(orgId, (tx) =>
       tx.document.create({
-        data: { organizationId: orgId, knowledgeBaseId: kbId, fileName: "x.pdf", mimeType: "application/pdf", sizeBytes: 1, storageKey: `${orgId}/${randomUUID()}`, status },
+        data: { organizationId: orgId, knowledgeBaseId: kbId, fileName: "x.pdf", mimeType: "application/pdf", sizeBytes: 1, storageKey: `${orgId}/${randomUUID()}`, status, retryCount },
       }),
     );
     if (backdateMs > 0) {
@@ -128,5 +134,39 @@ describe("sweepStuckDocuments", () => {
     } finally {
       await processingQueue.close();
     }
+  });
+
+  it("with autoRetry enabled, increments retryCount on every automatic re-enqueue", async () => {
+    const stuckId = await createDocument(orgA.id, kbA.id, "PROCESSING", THRESHOLD_MS * 3, 1);
+
+    await sweepStuckDocuments({ thresholdMs: THRESHOLD_MS, autoRetry: true, maxAutoRetries: 5 });
+
+    const doc = await withTenantTransaction(orgA.id, (tx) => tx.document.findUnique({ where: { id: stuckId } }));
+    expect(doc!.retryCount).toBe(2);
+    expect(doc!.status).toBe("QUEUED");
+  });
+
+  it("with autoRetry enabled, leaves a document that already hit maxAutoRetries permanently FAILED instead of re-enqueuing it again", async () => {
+    const stuckId = await createDocument(orgA.id, kbA.id, "PROCESSING", THRESHOLD_MS * 3, 3);
+
+    const result = await sweepStuckDocuments({ thresholdMs: THRESHOLD_MS, autoRetry: true, maxAutoRetries: 3 });
+
+    const doc = await withTenantTransaction(orgA.id, (tx) => tx.document.findUnique({ where: { id: stuckId } }));
+    expect(doc!.status).toBe("FAILED");
+    expect(doc!.retryCount).toBe(3); // unchanged — never re-enqueued, so never incremented
+    expect(doc!.failureReason).toContain("automatic retry limit (3) reached");
+
+    const processingQueue = new Queue(QUEUE_NAMES.processing, { connection: redisConnection });
+    try {
+      const jobs = await processingQueue.getJobs(["waiting", "waiting-children", "active", "delayed", "completed", "failed"]);
+      const retryJob = jobs.find((job) => job.name === JOB_NAMES.processDocument && (job.data as { documentId?: string }).documentId === stuckId);
+      expect(retryJob).toBeUndefined();
+    } finally {
+      await processingQueue.close();
+    }
+    // No new job means result.retried counts only documents actually
+    // re-enqueued this pass — a capped document contributes to `failed`,
+    // never to `retried`.
+    expect(result.retried).toBe(0);
   });
 });

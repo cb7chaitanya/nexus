@@ -81,17 +81,21 @@ function failureReason(thresholdMs: number): string {
  * document FAILED, immediately re-enqueues a fresh ingestion flow for it
  * instead of leaving it for manual retry. Off by default — it has a real
  * failure mode of its own: a document that's stuck because it's
- * genuinely malformed (not a transient worker crash) would just get
- * marked FAILED and re-enqueued again on every future sweep pass, with
- * no cap. This ticket doesn't ask for a retry-count/backoff mechanism to
- * solve that, so auto-retry is left as an explicit operational choice
- * rather than a silent default that could retry a broken document
- * forever.
+ * genuinely malformed (not a transient worker crash) could otherwise get
+ * marked FAILED and re-enqueued again on every future sweep pass forever.
+ * Bounded by STUCK_DOCUMENT_MAX_AUTO_RETRIES, checked against
+ * Document.retryCount — the same field POST /documents/:id/retry
+ * increments, so a document's total retry count (manual + automatic) is
+ * one number, not two separately-tracked ones. A document already at or
+ * over the cap is left FAILED with a reason that says so, never
+ * re-enqueued; getting there still takes an explicit manual retry (which
+ * resets nothing — it just increments the same counter further, same as
+ * it always has).
  *
- * Both env-derived numbers are accepted as overridable options — not for
- * production flexibility beyond the env vars themselves, but so tests
- * can exercise the auto-retry path and a tight threshold without
- * reloading the env-derived module singleton.
+ * All three env-derived numbers are accepted as overridable options — not
+ * for production flexibility beyond the env vars themselves, but so tests
+ * can exercise the auto-retry path, a tight threshold, and a low retry cap
+ * without reloading the env-derived module singleton.
  *
  * `job` is optional so every existing direct caller (tests calling this
  * function outside of BullMQ entirely) keeps working unchanged — the real
@@ -103,10 +107,11 @@ function failureReason(thresholdMs: number): string {
  * added per document inside the loop.
  */
 export async function sweepStuckDocuments(
-  options: { thresholdMs?: number; autoRetry?: boolean; job?: Job } = {},
+  options: { thresholdMs?: number; autoRetry?: boolean; maxAutoRetries?: number; job?: Job } = {},
 ): Promise<SweepResult> {
   const thresholdMs = options.thresholdMs ?? env.STUCK_DOCUMENT_THRESHOLD_MS;
   const autoRetry = options.autoRetry ?? env.STUCK_DOCUMENT_AUTO_RETRY;
+  const maxAutoRetries = options.maxAutoRetries ?? env.STUCK_DOCUMENT_MAX_AUTO_RETRIES;
   const threshold = new Date(Date.now() - thresholdMs);
   const result: SweepResult = { checked: 0, failed: 0, retried: 0 };
   const jobLog = createJobLogger({ jobId: options.job?.id });
@@ -134,12 +139,23 @@ export async function sweepStuckDocuments(
       docLog.error({ previousStatus: document.status, stuckSince: document.updatedAt, failureReason: reason }, "stuck document marked FAILED by sweep");
 
       if (autoRetry) {
-        await enqueueRetryFlow(document.id, org.id, document.knowledgeBaseId);
-        await withTenantTransaction(org.id, (tx) =>
-          tx.document.update({ where: { id: document.id }, data: { status: "QUEUED", failureReason: null } }),
-        );
-        result.retried++;
-        docLog.info("stuck document automatically re-enqueued for retry");
+        if (document.retryCount >= maxAutoRetries) {
+          const cappedReason = `${reason} — automatic retry limit (${maxAutoRetries}) reached; not re-enqueued, marked permanently failed.`;
+          await withTenantTransaction(org.id, (tx) =>
+            tx.document.update({ where: { id: document.id }, data: { failureReason: cappedReason } }),
+          );
+          docLog.error({ retryCount: document.retryCount, maxAutoRetries }, "stuck document reached its automatic retry limit — left FAILED");
+        } else {
+          await enqueueRetryFlow(document.id, org.id, document.knowledgeBaseId);
+          await withTenantTransaction(org.id, (tx) =>
+            tx.document.update({
+              where: { id: document.id },
+              data: { status: "QUEUED", failureReason: null, retryCount: { increment: 1 } },
+            }),
+          );
+          result.retried++;
+          docLog.info({ retryCount: document.retryCount + 1, maxAutoRetries }, "stuck document automatically re-enqueued for retry");
+        }
       }
     }
   }
