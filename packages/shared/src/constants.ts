@@ -44,6 +44,14 @@ export const QUEUE_NAMES = {
   // down by a worker job instead of inline in the request (see
   // apps/api/src/lib/kb-cleanup.ts).
   kbCleanup: "kb-cleanup",
+  // DELETE /documents/:id's retry-safe S3 cleanup fallback (see
+  // apps/api/src/lib/document-cleanup.ts) — its own queue rather than
+  // reusing kbCleanup: a single-document S3 delete is a much lighter,
+  // more frequent operation than a whole-KB cascade, and this repo's own
+  // convention (see the comment above this block) is one queue per
+  // concern for independent concurrency control, not overloading an
+  // existing queue with a second, unrelated job type.
+  documentCleanup: "document-cleanup",
 } as const;
 
 export const JOB_NAMES = {
@@ -53,4 +61,5 @@ export const JOB_NAMES = {
   embedChunks: "embed-chunks",
   sweepStuckDocuments: "sweep-stuck-documents",
   cleanupKnowledgeBase: "cleanup-knowledge-base",
+  cleanupDocumentStorage: "cleanup-document-storage",
 } as const;

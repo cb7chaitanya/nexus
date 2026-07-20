@@ -23,6 +23,7 @@ import { redisConnection } from "./lib/redis.js";
 import { initSentry } from "./lib/sentry.js";
 import { gracefulShutdown } from "./lib/shutdown.js";
 import { chunkTextProcessor } from "./processors/chunk-text.js";
+import { cleanupDocumentStorageProcessor } from "./processors/cleanup-document-storage.js";
 import { cleanupKnowledgeBaseProcessor } from "./processors/cleanup-knowledge-base.js";
 import { embedChunksProcessor } from "./processors/embed-chunks.js";
 import { extractTextProcessor } from "./processors/extract-text.js";
@@ -152,23 +153,42 @@ async function main(): Promise<void> {
     concurrency: env.WORKER_KB_CLEANUP_CONCURRENCY,
   });
 
-  const workers = [processingWorker, extractionWorker, embeddingWorker, sweepWorker, kbCleanupWorker];
+  // DELETE /documents/:id's retry-safe fallback (apps/api/src/lib/document-cleanup.ts)
+  // — same reliability pattern as kbCleanupWorker above, its own queue for
+  // the same "independent concurrency control" reasoning (see this
+  // function's opening comment): a burst of document-storage cleanup
+  // retries shouldn't compete with, or be conflated in metrics/health
+  // with, whole-KB cleanup capacity.
+  const documentCleanupWorker = new Worker(QUEUE_NAMES.documentCleanup, withJobTimeout(cleanupDocumentStorageProcessor, env.WORKER_MAX_JOB_DURATION_MS), {
+    ...sharedWorkerOptions,
+    concurrency: env.WORKER_DOCUMENT_CLEANUP_CONCURRENCY,
+  });
 
-  // Standalone Queue handles for processing/extraction/kb-cleanup —
-  // distinct from the Worker objects above (a BullMQ Worker is a
-  // consumer, it doesn't expose getJobCounts()/introspection the way a
-  // Queue does). document-embedding and document-sweep already have their
-  // own Queue instances (documentEmbeddingQueue, above — needed by
-  // processors/chunk-text.ts's own fan-out; documentSweepQueue, needed to
-  // schedule the repeatable sweep job), so only these three are new here.
-  // Exist for two things: queue-depth/active-jobs metrics below, and
-  // widening the health check (below) and graceful-shutdown queue list
-  // (see the shutdown() closure further down) to cover all five queues
-  // instead of two.
+  const workers = [processingWorker, extractionWorker, embeddingWorker, sweepWorker, kbCleanupWorker, documentCleanupWorker];
+
+  // Standalone Queue handles for processing/extraction/kb-cleanup/
+  // document-cleanup — distinct from the Worker objects above (a BullMQ
+  // Worker is a consumer, it doesn't expose getJobCounts()/introspection
+  // the way a Queue does). document-embedding and document-sweep already
+  // have their own Queue instances (documentEmbeddingQueue, above —
+  // needed by processors/chunk-text.ts's own fan-out; documentSweepQueue,
+  // needed to schedule the repeatable sweep job), so only these four are
+  // new here. Exist for two things: queue-depth/active-jobs metrics
+  // below, and widening the health check (below) and graceful-shutdown
+  // queue list (see the shutdown() closure further down) to cover all
+  // six queues instead of two.
   const documentProcessingQueue = new Queue(QUEUE_NAMES.processing, { connection: redisConnection });
   const documentExtractionQueue = new Queue(QUEUE_NAMES.extraction, { connection: redisConnection });
   const kbCleanupQueue = new Queue(QUEUE_NAMES.kbCleanup, { connection: redisConnection });
-  const allQueues = [documentProcessingQueue, documentExtractionQueue, documentEmbeddingQueue, documentSweepQueue, kbCleanupQueue];
+  const documentCleanupQueue = new Queue(QUEUE_NAMES.documentCleanup, { connection: redisConnection });
+  const allQueues = [
+    documentProcessingQueue,
+    documentExtractionQueue,
+    documentEmbeddingQueue,
+    documentSweepQueue,
+    kbCleanupQueue,
+    documentCleanupQueue,
+  ];
 
   // registerQueueForMetrics (@raas/metrics) — queueDepth/queueActiveJobs
   // sample every registered queue's real BullMQ state at each /metrics
@@ -312,6 +332,7 @@ async function main(): Promise<void> {
         embedding: env.WORKER_EMBEDDING_CONCURRENCY,
         sweep: env.WORKER_SWEEP_CONCURRENCY,
         kbCleanup: env.WORKER_KB_CLEANUP_CONCURRENCY,
+        documentCleanup: env.WORKER_DOCUMENT_CLEANUP_CONCURRENCY,
       },
       maxJobDurationMs: env.WORKER_MAX_JOB_DURATION_MS,
       shutdownTimeoutMs: env.WORKER_SHUTDOWN_TIMEOUT_MS,
@@ -326,7 +347,7 @@ async function main(): Promise<void> {
       alertWebhookConfigured: Boolean(env.ALERT_WEBHOOK_URL),
       healthPort: env.WORKER_HEALTH_PORT,
     },
-    "worker ready — listening on document-processing, document-extraction, document-embedding, document-sweep, kb-cleanup",
+    "worker ready — listening on document-processing, document-extraction, document-embedding, document-sweep, kb-cleanup, document-cleanup",
   );
 }
 

@@ -90,6 +90,10 @@ export const env = {
   WORKER_EMBEDDING_CONCURRENCY: requirePositiveInt("WORKER_EMBEDDING_CONCURRENCY", process.env.WORKER_EMBEDDING_CONCURRENCY, 2),
   WORKER_SWEEP_CONCURRENCY: requirePositiveInt("WORKER_SWEEP_CONCURRENCY", process.env.WORKER_SWEEP_CONCURRENCY, 1),
   WORKER_KB_CLEANUP_CONCURRENCY: requirePositiveInt("WORKER_KB_CLEANUP_CONCURRENCY", process.env.WORKER_KB_CLEANUP_CONCURRENCY, 2),
+  // Its own queue, separate from kb-cleanup — a single-document S3 delete
+  // is much lighter and more frequent than a whole-KB cascade, closer in
+  // cost to processing's own "cheap, high concurrency is fine" tier.
+  WORKER_DOCUMENT_CLEANUP_CONCURRENCY: requirePositiveInt("WORKER_DOCUMENT_CLEANUP_CONCURRENCY", process.env.WORKER_DOCUMENT_CLEANUP_CONCURRENCY, 10),
   // Generic per-job-attempt wall-clock ceiling (see lib/job-timeout.ts),
   // applied uniformly to every processor at the Worker construction site
   // in index.ts — not a change to any processor itself. A backstop against
