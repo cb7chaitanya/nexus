@@ -65,6 +65,29 @@ export async function buildApp(): Promise<FastifyInstance> {
     // overrides (tighter, for the document metadata routes) are set at
     // those routes directly.
     bodyLimit: GLOBAL_BODY_LIMIT_BYTES,
+    // Load-bearing for graceful shutdown, not a style preference — verified
+    // empirically against this exact Fastify version, not assumed from
+    // docs. Fastify defaults forceCloseConnections to 'idle' when the
+    // underlying Node http.Server supports closeIdleConnections() (true
+    // here), but ITS OWN close() implementation only actually calls
+    // closeIdleConnections() when a custom `serverFactory` option is also
+    // set (fastify.js's onClose hook: `if (forceCloseConnections ===
+    // 'idle' && options.serverFactory)`) — with no serverFactory (the
+    // normal case, ours included), it silently falls through to
+    // closeAllConnections() instead, which destroys every open socket
+    // UNCONDITIONALLY, active or not. That includes a hijacked, actively
+    // streaming POST /kb/:id/chat SSE response (see routes/chat.ts) — a
+    // customer's in-progress answer gets cut off the instant close() is
+    // called, not after any grace period. Setting this to `false`
+    // explicitly restores Node's traditional semantics (close() waits for
+    // every open connection, including an active hijacked one, to end
+    // naturally) — which is what lib/shutdown.ts's own graceful-drain
+    // race against a timeout is built to assume and needs; that function
+    // is also the thing that keeps `false` here from being able to hang
+    // forever on an idle keep-alive connection nobody proactively closed
+    // (it periodically calls closeIdleConnections() itself during the
+    // race — see that file for why).
+    forceCloseConnections: false,
   });
 
   await app.register(fastifyCookie);
