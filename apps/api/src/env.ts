@@ -11,6 +11,18 @@ function requireEnv(name: string): string {
   return value;
 }
 
+/** Fail fast on a misconfigured numeric env var rather than silently
+ * shipping a NaN/zero/negative limit into a cost-control path — the same
+ * "refuse to start" discipline requireEnv already applies to missing
+ * secrets, extended to a value that IS set but nonsensical. */
+function requirePositiveInt(name: string, rawValue: string | undefined, defaultValue: number): number {
+  const value = rawValue === undefined ? defaultValue : Number(rawValue);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer, got: ${JSON.stringify(rawValue)}. Refusing to start.`);
+  }
+  return value;
+}
+
 export const env = {
   API_PORT: Number(process.env.API_PORT ?? 4000),
   API_HOST: process.env.API_HOST ?? "0.0.0.0",
@@ -41,6 +53,14 @@ export const env = {
   FAKE_EMBEDDING_DELAY_MS: Number(process.env.FAKE_EMBEDDING_DELAY_MS ?? 0),
   LLM_PROVIDER: (process.env.LLM_PROVIDER ?? "openai") as "openai" | "fake",
   OPENAI_CHAT_MODEL: process.env.OPENAI_CHAT_MODEL ?? "gpt-4o-mini",
+  // Hard per-request ceiling on completion output tokens (see
+  // @raas/providers's OpenAIChatProvider) — the daily chat token budget
+  // below can only reject the NEXT request once a prior one has already
+  // gone over; this bounds what any single request can cost regardless of
+  // budget state. 1024 is generous for a citation-grounded chat answer
+  // (architecture.md §4.7) while still being a real ceiling, not a
+  // nominal one.
+  MAX_COMPLETION_TOKENS: requirePositiveInt("MAX_COMPLETION_TOKENS", process.env.MAX_COMPLETION_TOKENS, 1024),
   FAKE_LLM_DELAY_MS: Number(process.env.FAKE_LLM_DELAY_MS ?? 0),
   // Required unless BOTH providers are set to "fake" — either provider
   // being "openai" means a real key is load-bearing.

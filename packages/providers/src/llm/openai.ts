@@ -6,6 +6,10 @@ export interface OpenAIChatProviderOptions {
   apiKey: string;
   model: string;
   baseUrl?: string;
+  /** Hard ceiling on a single completion's output tokens — every request
+   * sends this, unconditionally. Defaults to DEFAULT_MAX_COMPLETION_TOKENS.
+   * See the class doc comment for why this exists. */
+  maxCompletionTokens?: number;
   /** Injectable for tests — never hits the real OpenAI API in the test
    * suite (see this package's openai.test.ts). */
   fetchImpl?: typeof fetch;
@@ -49,6 +53,22 @@ function isRetryableStatus(status: number): boolean {
   return status === 429 || status >= 500;
 }
 
+// Safe default when a caller doesn't pass maxCompletionTokens explicitly
+// (every production call site does — see apps/api/src/lib/llm-provider.ts —
+// this only matters for a construction site that forgets to). Bounds the
+// worst case per-request cost of an uncapped completion; see
+// docs/decisions.md's cost-protection ticket for the incident this closes.
+export const DEFAULT_MAX_COMPLETION_TOKENS = 1024;
+
+// o1/o3-family "reasoning" models reject `max_tokens` outright and require
+// `max_completion_tokens` instead; every other Chat Completions model
+// (gpt-4o, gpt-4o-mini, gpt-3.5-turbo, ...) accepts `max_tokens`, which is
+// the field OpenAI's API has documented for years and still honors. This is
+// why the request body field name is resolved per-model rather than fixed.
+function maxTokensParamName(model: string): "max_tokens" | "max_completion_tokens" {
+  return /^o\d/.test(model) ? "max_completion_tokens" : "max_tokens";
+}
+
 /**
  * OpenAI implementation of LLMProvider, using the Chat Completions
  * streaming API (`stream: true`), which sends a series of
@@ -56,6 +76,15 @@ function isRetryableStatus(status: number): boolean {
  * `data: [DONE]` line. This parses that wire format directly rather than
  * depending on OpenAI's SDK, matching the fetch-based, dependency-free
  * style of OpenAIEmbeddingProvider in this same package.
+ *
+ * Every request sends a hard `max_tokens`/`max_completion_tokens` ceiling
+ * (maxCompletionTokens) — streaming still yields deltas exactly as before,
+ * this only bounds how many the model is allowed to produce before OpenAI
+ * itself truncates the response. Without this, a single request's cost is
+ * bounded only by the model's own native output ceiling (tens of thousands
+ * of tokens on some models), which the org-level daily token budget
+ * (@raas/usage) can only catch *after* the cost is already incurred — this
+ * is the per-request backstop that budget can't be.
  *
  * Resilience is split by phase, which is the actual distinction that
  * makes retrying safe or not: establishing the response — the fetch
@@ -76,6 +105,7 @@ export class OpenAIChatProvider implements LLMProvider {
   private readonly apiKey: string;
   private readonly model: string;
   private readonly baseUrl: string;
+  private readonly maxCompletionTokens: number;
   private readonly fetchImpl: typeof fetch;
   private readonly sleepImpl: (ms: number) => Promise<void>;
   private readonly maxRetries: number;
@@ -87,6 +117,7 @@ export class OpenAIChatProvider implements LLMProvider {
     this.apiKey = options.apiKey;
     this.model = options.model;
     this.baseUrl = options.baseUrl ?? "https://api.openai.com/v1";
+    this.maxCompletionTokens = options.maxCompletionTokens ?? DEFAULT_MAX_COMPLETION_TOKENS;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.sleepImpl = options.sleepImpl ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.maxRetries = options.maxRetries ?? 2;
@@ -140,7 +171,12 @@ export class OpenAIChatProvider implements LLMProvider {
                 Authorization: `Bearer ${this.apiKey}`,
                 "Content-Type": "application/json",
               },
-              body: JSON.stringify({ model: this.model, messages, stream: true }),
+              body: JSON.stringify({
+                model: this.model,
+                messages,
+                stream: true,
+                [maxTokensParamName(this.model)]: this.maxCompletionTokens,
+              }),
               signal,
             }),
           this.connectTimeoutMs,

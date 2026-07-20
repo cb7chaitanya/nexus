@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { CircuitBreaker, CircuitBreakerOpenError } from "../resilience/circuit-breaker.js";
-import { OpenAIChatError, OpenAIChatProvider } from "./openai.js";
+import { DEFAULT_MAX_COMPLETION_TOKENS, OpenAIChatError, OpenAIChatProvider } from "./openai.js";
+
+/** Parses the JSON body of a fetchImpl mock's Nth call (0-indexed) — every
+ * test below cares about what was actually sent to OpenAI, not just that
+ * something was. */
+function requestBody(fetchImpl: ReturnType<typeof vi.fn>, callIndex = 0): Record<string, unknown> {
+  const init = fetchImpl.mock.calls[callIndex]![1] as RequestInit;
+  return JSON.parse(init.body as string) as Record<string, unknown>;
+}
 
 /** Builds a real streaming Response whose body emits `rawChunks` as
  * separate reads, so tests can exercise SSE lines split across chunk
@@ -154,5 +162,49 @@ describe("OpenAIChatProvider", () => {
     fetchImpl.mockClear();
     await expect(collect(makeProvider().streamCompletion([{ role: "user", content: "hi" }]))).rejects.toThrow(CircuitBreakerOpenError);
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  describe("completion token ceiling", () => {
+    it("sends max_tokens set to DEFAULT_MAX_COMPLETION_TOKENS when maxCompletionTokens isn't specified", async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(sseResponse(["data: [DONE]\n\n"]));
+      const provider = new OpenAIChatProvider({ apiKey: "sk-test", model: "gpt-4o-mini", fetchImpl });
+
+      await collect(provider.streamCompletion([{ role: "user", content: "hi" }]));
+
+      const body = requestBody(fetchImpl);
+      expect(body.max_tokens).toBe(DEFAULT_MAX_COMPLETION_TOKENS);
+      expect(body.max_completion_tokens).toBeUndefined();
+    });
+
+    it("sends the configured maxCompletionTokens as max_tokens for a standard chat model", async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(sseResponse(["data: [DONE]\n\n"]));
+      const provider = new OpenAIChatProvider({ apiKey: "sk-test", model: "gpt-4o-mini", fetchImpl, maxCompletionTokens: 256 });
+
+      await collect(provider.streamCompletion([{ role: "user", content: "hi" }]));
+
+      expect(requestBody(fetchImpl).max_tokens).toBe(256);
+    });
+
+    it("sends max_completion_tokens instead of max_tokens for an o-series reasoning model", async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(sseResponse(["data: [DONE]\n\n"]));
+      const provider = new OpenAIChatProvider({ apiKey: "sk-test", model: "o1-mini", fetchImpl, maxCompletionTokens: 512 });
+
+      await collect(provider.streamCompletion([{ role: "user", content: "hi" }]));
+
+      const body = requestBody(fetchImpl);
+      expect(body.max_completion_tokens).toBe(512);
+      expect(body.max_tokens).toBeUndefined();
+    });
+
+    it("still streams every delta normally with the ceiling applied", async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(
+        sseResponse(['data: {"choices":[{"delta":{"content":"capped"}}]}\n\n', "data: [DONE]\n\n"]),
+      );
+      const provider = new OpenAIChatProvider({ apiKey: "sk-test", model: "gpt-4o-mini", fetchImpl, maxCompletionTokens: 64 });
+
+      const deltas = await collect(provider.streamCompletion([{ role: "user", content: "hi" }]));
+
+      expect(deltas).toEqual(["capped"]);
+    });
   });
 });

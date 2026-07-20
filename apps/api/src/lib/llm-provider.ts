@@ -11,7 +11,7 @@ export function getLLMProvider(): LLMProvider {
     provider =
       env.LLM_PROVIDER === "fake"
         ? new FakeLLMProvider({ delayMs: env.FAKE_LLM_DELAY_MS })
-        : new OpenAIChatProvider({ apiKey: env.OPENAI_API_KEY, model: env.OPENAI_CHAT_MODEL });
+        : new OpenAIChatProvider({ apiKey: env.OPENAI_API_KEY, model: env.OPENAI_CHAT_MODEL, maxCompletionTokens: env.MAX_COMPLETION_TOKENS });
   }
   return provider;
 }
