@@ -179,17 +179,17 @@ export async function processEmbedChunksJob(job: Job<EmbedChunksJobData>, deps: 
     // now, the same way an UnrecoverableError does, instead of burning
     // the full retry budget on something retrying can't fix.
     if (err instanceof ApiError && err.code === "RATE_LIMIT_EXCEEDED") {
-      await failDocument(organizationId, documentId, err.message);
+      await failDocument(organizationId, documentId, err);
       log.warn({ err }, "embed-chunks failed: daily budget exceeded");
       throw new UnrecoverableError(err.message);
     }
     if (err instanceof UnrecoverableError) {
-      await failDocument(organizationId, documentId, err.message);
+      await failDocument(organizationId, documentId, err);
       log.warn({ err }, "embed-chunks failed: unrecoverable");
       throw err;
     }
     if (isLastAttempt(job)) {
-      await failDocument(organizationId, documentId, err instanceof Error ? err.message : String(err));
+      await failDocument(organizationId, documentId, err);
     }
     log.error({ err }, "embed-chunks failed");
     throw err;

@@ -30,7 +30,7 @@ export async function processDocumentProcessor(job: Job<DocumentJobData>): Promi
     log.info("document marked READY");
   } catch (err) {
     if (isLastAttempt(job)) {
-      await failDocument(organizationId, documentId, err instanceof Error ? err.message : String(err));
+      await failDocument(organizationId, documentId, err);
     }
     log.error({ err }, "process-document failed");
     throw err;

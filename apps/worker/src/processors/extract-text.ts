@@ -3,7 +3,7 @@ import { UnrecoverableError, type Job } from "bullmq";
 
 import { env } from "../env.js";
 import { extractPdfText, ScannedDocumentError, type ExtractedDocument } from "../lib/extract-pdf.js";
-import { failDocument, isLastAttempt } from "../lib/job-failure.js";
+import { DocumentValidationError, failDocument, isLastAttempt } from "../lib/job-failure.js";
 import { createJobLogger } from "../lib/job-logger.js";
 import { downloadObject } from "../lib/storage.js";
 import type { DocumentJobData } from "./types.js";
@@ -33,7 +33,7 @@ export async function extractTextProcessor(job: Job<DocumentJobData>): Promise<E
     });
 
     if (document.mimeType !== "application/pdf") {
-      throw new UnrecoverableError(`Unsupported file type "${document.mimeType}" — only application/pdf is supported`);
+      throw new DocumentValidationError(`Unsupported file type "${document.mimeType}" — only application/pdf is supported`);
     }
 
     // No-op outside chaos testing (see env.ts) — lets a test's kill land
@@ -50,17 +50,17 @@ export async function extractTextProcessor(job: Job<DocumentJobData>): Promise<E
     return extracted;
   } catch (err) {
     if (err instanceof ScannedDocumentError) {
-      await failDocument(organizationId, documentId, err.message);
+      await failDocument(organizationId, documentId, err);
       log.warn({ err }, "extract-text failed: scanned document");
       throw new UnrecoverableError(err.message);
     }
     if (err instanceof UnrecoverableError) {
-      await failDocument(organizationId, documentId, err.message);
+      await failDocument(organizationId, documentId, err);
       log.warn({ err }, "extract-text failed: unrecoverable");
       throw err;
     }
     if (isLastAttempt(job)) {
-      await failDocument(organizationId, documentId, err instanceof Error ? err.message : String(err));
+      await failDocument(organizationId, documentId, err);
     }
     log.error({ err }, "extract-text failed");
     throw err;

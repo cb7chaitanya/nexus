@@ -5,7 +5,7 @@ import { UnrecoverableError, type Job } from "bullmq";
 import { env } from "../env.js";
 import { chunkPages } from "../lib/chunk-text.js";
 import type { ExtractedDocument } from "../lib/extract-pdf.js";
-import { failDocument, isLastAttempt } from "../lib/job-failure.js";
+import { DocumentValidationError, failDocument, isLastAttempt } from "../lib/job-failure.js";
 import { createJobLogger } from "../lib/job-logger.js";
 import { DEFAULT_JOB_OPTS, documentEmbeddingQueue } from "../queue/queues.js";
 import type { DocumentJobData, EmbedChunksJobData } from "./types.js";
@@ -57,14 +57,14 @@ export async function chunkTextProcessor(job: Job<DocumentJobData>): Promise<{ c
 
     const chunks = chunkPages(extracted.pages);
     if (chunks.length === 0) {
-      throw new UnrecoverableError("document produced no extractable text chunks");
+      throw new DocumentValidationError("document produced no extractable text chunks");
     }
     // Cost-safety cap (docs/decisions.md R4) — checked before any upsert or
     // embed-chunks job is enqueued, so an oversized document never spends a
     // single embedding-provider call. See MAX_CHUNKS_PER_DOCUMENT's doc
     // comment for why this is independent of the org's daily budget.
     if (chunks.length > MAX_CHUNKS_PER_DOCUMENT) {
-      throw new UnrecoverableError(
+      throw new DocumentValidationError(
         `document produced ${chunks.length} chunks, exceeding the ${MAX_CHUNKS_PER_DOCUMENT}-chunk-per-document limit`,
       );
     }
@@ -122,12 +122,12 @@ export async function chunkTextProcessor(job: Job<DocumentJobData>): Promise<{ c
     return { chunkCount: chunks.length };
   } catch (err) {
     if (err instanceof UnrecoverableError) {
-      await failDocument(organizationId, documentId, err.message);
+      await failDocument(organizationId, documentId, err);
       log.warn({ err }, "chunk-text failed: unrecoverable");
       throw err;
     }
     if (isLastAttempt(job)) {
-      await failDocument(organizationId, documentId, err instanceof Error ? err.message : String(err));
+      await failDocument(organizationId, documentId, err);
     }
     log.error({ err }, "chunk-text failed");
     throw err;
