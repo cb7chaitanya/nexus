@@ -49,6 +49,7 @@ guards) — there is no way to silently deploy with a blank secret.
 | `WORKER_HEALTH_PORT` | no (`3001`) | worker | `GET /health` — internal only, not published to the host (see `docker-compose.prod.yml`). |
 | `ALERT_WEBHOOK_URL`, `ALERT_WEBHOOK_TIMEOUT_MS` | no | worker | Job-failure alerting (see `apps/worker/src/lib/notifications/`). Unset URL selects a no-op notifier — alerting is optional, not load-bearing for the worker to start. |
 | `LOG_LEVEL` | no (`info`) | api, worker | |
+| `SENTRY_DSN` | no (unset) | api, worker | Error tracking — see [Observability](#observability) below. Unset leaves `@raas/observability`'s `captureException` going to `NoopErrorTracker`. |
 
 Full annotated defaults for every optional variable are in
 `docker-compose.prod.yml` itself (`${VAR:-default}`) and in
@@ -373,12 +374,16 @@ deployment-specific subset.
   `docker-compose.prod.yml` already keeps `WORKER_HEALTH_PORT` internal-only
   for this reason; a real Prometheus deployment should scrape both apps over
   the same private network, not through any public ingress.
-- **No new required environment variables.** Metrics and the
-  `@raas/observability` no-op error tracker both work with zero
-  configuration. `SENTRY_DSN` (or an equivalent) is only relevant if a
-  deployment later adopts a real error tracker — see OBSERVABILITY.md's
-  "Adopting a real tracker" section; nothing in this repo reads that
-  variable today.
+- **Error tracking (`SENTRY_DSN`, optional)**: both `apps/api` and
+  `apps/worker` call `initSentry()` at process startup
+  (`apps/api/src/lib/sentry.ts`, `apps/worker/src/lib/sentry.ts`) — unset
+  (the default), it's a no-op and `@raas/observability`'s `captureException`
+  keeps going to `NoopErrorTracker`; set it to a real Sentry DSN to start
+  capturing. Both apps also register `uncaughtException`/`unhandledRejection`
+  process handlers that capture the exception, log it, run the same graceful
+  shutdown a `SIGTERM` uses, and exit non-zero — a crash is never silently
+  swallowed. See [OBSERVABILITY.md](./OBSERVABILITY.md)'s "Adopting a real
+  tracker" and "Crash handling" sections for the full detail.
 - **Log aggregation**: both apps already log structured JSON (pino) to
   stdout in production (`NODE_ENV=production` disables `pino-pretty` — see
   `packages/logger`), so a standard container log driver / log-shipping

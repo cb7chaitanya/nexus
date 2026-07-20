@@ -193,6 +193,12 @@ services:
       # before this timeout fires).
       API_SHUTDOWN_TIMEOUT_MS: ${API_SHUTDOWN_TIMEOUT_MS:-25000}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Optional — see apps/api/src/lib/sentry.ts. Unset (the default)
+      # leaves captureException calls (the error handler's own unexpected-
+      # error path, and the uncaughtException/unhandledRejection handlers
+      # in index.ts) going to NoopErrorTracker, exactly as before this
+      # existed. Never required for this service to start.
+      SENTRY_DSN: ${SENTRY_DSN:-}
     # Must exceed API_SHUTDOWN_TIMEOUT_MS above (default 25s) or Compose's
     # own SIGKILL fires first, defeating the graceful-shutdown timeout
     # entirely — Compose's unset default is 10s. See DEPLOYMENT.md's
@@ -287,6 +293,10 @@ services:
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
       ALERT_WEBHOOK_TIMEOUT_MS: ${ALERT_WEBHOOK_TIMEOUT_MS:-5000}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Optional — see apps/worker/src/lib/sentry.ts. Same reasoning as
+      # api's own copy of this var: unset leaves captureException calls
+      # going to NoopErrorTracker, never required to start.
+      SENTRY_DSN: ${SENTRY_DSN:-}
     # Must exceed WORKER_SHUTDOWN_TIMEOUT_MS above (default 25s) — see the
     # identical note on the api service above and DEPLOYMENT.md's "First
     # staging deployment" section.

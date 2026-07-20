@@ -154,8 +154,9 @@ captureException(err, { requestId, organizationId, route });
   `SentryAdapter` is structurally typed against a minimal
   `SentryLikeClient` interface, not an import of the real SDK.
 
-`captureException` is wired into exactly two places — both are already the
-"this is unexpected, not routine" branch in existing error handling:
+`captureException` is wired into four places — all already the "this is
+unexpected, not routine" branch in existing error handling, never a normal
+control-flow path:
 
 - `apps/api/src/plugins/error-handler.ts`, the unhandled/500 branch (never
   the `ApiError`/known-4xx branches above it — those are expected,
@@ -163,28 +164,72 @@ captureException(err, { requestId, organizationId, route });
 - `apps/worker/src/lib/job-failure-alerts.ts`, only once `job.finishedOn` is
   set (BullMQ has definitively given up retrying) — never on a transient,
   still-retryable attempt.
+- Both apps' `uncaughtException`/`unhandledRejection` process-level handlers
+  (`apps/api/src/index.ts`, `apps/worker/src/index.ts`) — see "Crash
+  handling" below.
+- Both apps' top-level `main().catch(...)` — a failure during startup itself
+  (before either app is serving anything).
 
-### Adopting a real tracker (Sentry example)
+### Adopting a real tracker (Sentry)
 
-Not done by this repo today — an adoption decision for whoever operates a
-given deployment, made once at process startup, before any request/job could
-fail:
+Wired up in both apps (`apps/api/src/lib/sentry.ts`,
+`apps/worker/src/lib/sentry.ts`), each calling `initSentry()` once at the top
+of `main()`, before anything that could fail:
 
 ```ts
-// apps/api/src/index.ts (or apps/worker/src/index.ts), near the top
-import * as Sentry from "@sentry/node"; // add @sentry/node to that app's package.json first
-import { setErrorTracker, SentryAdapter } from "@raas/observability";
+// apps/api/src/lib/sentry.ts (apps/worker/src/lib/sentry.ts mirrors it)
+import * as Sentry from "@sentry/node";
+import { SentryAdapter, setErrorTracker } from "@raas/observability";
+import { env } from "../env.js";
 
-if (process.env.SENTRY_DSN) {
-  Sentry.init({ dsn: process.env.SENTRY_DSN });
+export function initSentry(): void {
+  if (!env.SENTRY_DSN) return;
+  Sentry.init({ dsn: env.SENTRY_DSN, environment: env.NODE_ENV });
   setErrorTracker(new SentryAdapter(Sentry));
 }
 ```
+
+`SENTRY_DSN` is optional and unset by default (local dev, and any deployment
+that hasn't adopted Sentry) — `initSentry()` is then a no-op and every
+`captureException` call keeps going to `NoopErrorTracker`, exactly as before
+this existed. Set `SENTRY_DSN` (see `docker-compose.prod.yml`,
+`.env.prod.example`) to start actually capturing.
 
 Any other tracker works the same way — implement `ErrorTracker`
 (`captureException(error, context)`) and pass it to `setErrorTracker`. No
 change to `error-handler.ts`, `job-failure-alerts.ts`, or anywhere else that
 calls `captureException`.
+
+### Crash handling: `uncaughtException` / `unhandledRejection`
+
+Both apps register process-level handlers for both events (near the top of
+`main()`, right after the app/worker is constructed) — Node's own default
+for an uncaught exception or unhandled rejection with no listener is to
+print it and exit `1`; registering a handler takes over that responsibility
+entirely, so both handlers are written to *never swallow the crash*: every
+path through them ends in `process.exit`, non-zero, including a failure
+inside the handler itself.
+
+Each handler, in order:
+
+1. `captureException(err, { source: "uncaughtException" | "unhandledRejection" })`.
+2. A structured `error`-level log line (the app/worker logger, not `console`).
+3. The same `gracefulShutdown` a clean `SIGTERM` uses — draining in-flight
+   work (an in-progress chat SSE stream for `apps/api`, an active job for
+   `apps/worker`) within the existing `API_SHUTDOWN_TIMEOUT_MS`/
+   `WORKER_SHUTDOWN_TIMEOUT_MS` ceiling — then `process.exit(1)`. A crash on
+   one request/job is not a reason to sever every other in-flight connection
+   instantly.
+4. If step 1–3 themselves throw, a `try`/`catch` around the whole handler
+   forces `process.exit(1)` immediately as a last resort, so a secondary
+   failure while handling the first one still can't leave the process
+   hanging.
+
+If a signal-triggered shutdown is already draining when a crash fires, the
+crash is still captured and logged, but the existing shutdown's own (`0`)
+exit code wins the race rather than starting a second, competing shutdown —
+a deliberate, documented tradeoff (see the identical guard comment in both
+`index.ts` files), not an oversight.
 
 ---
 
