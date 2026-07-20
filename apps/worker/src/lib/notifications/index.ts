@@ -1,4 +1,4 @@
-import { createLogger } from "@raas/logger";
+import { createLogger, type Logger } from "@raas/logger";
 
 import { env } from "../../env.js";
 import { NoopNotifier } from "./noop-notifier.js";
@@ -10,6 +10,11 @@ export { WebhookNotifier } from "./webhook-notifier.js";
 export { NoopNotifier } from "./noop-notifier.js";
 
 const logger = createLogger({ service: "worker" });
+
+export interface CreateNotifierConfig {
+  alertWebhookUrl?: string;
+  alertWebhookTimeoutMs?: number;
+}
 
 /**
  * The single place that decides which Notifier implementation is active
@@ -30,12 +35,22 @@ const logger = createLogger({ service: "worker" });
  * startup (not repeated per-failure — job-failure-alerts.ts already logs
  * every failure regardless of notifier) makes that gap visible without
  * blocking the worker from starting.
+ *
+ * `config`/`log` default to the real env/logger — the production call
+ * site (index.ts) calls this with no arguments, same as before. Both are
+ * accepted as parameters (same injectable-config shape as
+ * sweepStuckDocuments's options or processEmbedChunksJob's deps
+ * elsewhere in this app) so a test can exercise "webhook configured" vs.
+ * "not configured" directly, without process.env/module-reset gymnastics.
  */
-export function createNotifier(): Notifier {
-  if (env.ALERT_WEBHOOK_URL) {
-    return new WebhookNotifier({ url: env.ALERT_WEBHOOK_URL, timeoutMs: env.ALERT_WEBHOOK_TIMEOUT_MS });
+export function createNotifier(
+  config: CreateNotifierConfig = { alertWebhookUrl: env.ALERT_WEBHOOK_URL, alertWebhookTimeoutMs: env.ALERT_WEBHOOK_TIMEOUT_MS },
+  log: Logger = logger,
+): Notifier {
+  if (config.alertWebhookUrl) {
+    return new WebhookNotifier({ url: config.alertWebhookUrl, timeoutMs: config.alertWebhookTimeoutMs });
   }
-  logger.warn(
+  log.warn(
     "ALERT_WEBHOOK_URL is not set — permanently-failed jobs will only be logged, no external notification will be sent. Set ALERT_WEBHOOK_URL to enable alerting.",
   );
   return new NoopNotifier();
