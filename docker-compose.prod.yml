@@ -270,6 +270,7 @@ services:
       WORKER_EMBEDDING_CONCURRENCY: ${WORKER_EMBEDDING_CONCURRENCY:-2}
       WORKER_SWEEP_CONCURRENCY: ${WORKER_SWEEP_CONCURRENCY:-1}
       WORKER_KB_CLEANUP_CONCURRENCY: ${WORKER_KB_CLEANUP_CONCURRENCY:-2}
+      WORKER_DOCUMENT_CLEANUP_CONCURRENCY: ${WORKER_DOCUMENT_CLEANUP_CONCURRENCY:-10}
       # Generic per-job-attempt wall-clock ceiling (lib/job-timeout.ts) —
       # the outermost backstop against a job hung well past any reasonable
       # duration for its stage. See apps/worker/src/env.ts.
