@@ -123,8 +123,18 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
     restart: unless-stopped
+    # NOTE: fixed host port — this only works unscaled (API_REPLICAS=1).
+    # Raising API_REPLICAS below without also removing this published port
+    # (and fronting api with a reverse proxy that load-balances across the
+    # replicas instead, per this file's own top-of-file note) makes Docker
+    # fail loudly at startup with "port is already allocated", since
+    # multiple containers can't all bind the same host port. That failure
+    # is deliberate here rather than silently picking one replica's port —
+    # see DEPLOYMENT.md's "Database connection pool and timeouts" section.
     ports:
       - "${API_PORT:-4000}:${API_PORT:-4000}"
+    deploy:
+      replicas: ${API_REPLICAS:-1}
     environment:
       NODE_ENV: production
       API_PORT: ${API_PORT:-4000}
@@ -134,12 +144,15 @@ services:
       # num_physical_cpus*2+1 with no wait-for-a-connection ceiling —
       # implicit, and uncoordinated with whatever apps/worker's own pool
       # is doing against the same Postgres max_connections budget (100,
-      # this image's unmodified default). 10 here + 15 for worker (below)
-      # leaves comfortable headroom under 100 for Postgres's own reserved
-      # connections, manual admin access, and the short-lived `migrate`
-      # job — see DEPLOYMENT.md's "Database connection pool and timeouts"
-      # section for the full sizing math and how to raise these if this
-      # deployment is horizontally scaled.
+      # this image's unmodified default). This is per-CONTAINER, not
+      # per-service: total api connections are (API_REPLICAS ×
+      # API_DB_CONNECTION_LIMIT), and total worker connections are
+      # (WORKER_REPLICAS × WORKER_DB_CONNECTION_LIMIT) — the defaults here
+      # (10 api / 15 worker, both below) leave comfortable headroom under
+      # 100 only at the default replica count of 1 each. See
+      # DEPLOYMENT.md's "Database connection pool and timeouts" section
+      # for the full sizing formula, worked examples, and how to lower
+      # these per-replica limits if this deployment is scaled out.
       APP_DATABASE_URL: postgresql://raas_app:${POSTGRES_APP_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public&connection_limit=${API_DB_CONNECTION_LIMIT:-10}&pool_timeout=${API_DB_POOL_TIMEOUT_SECONDS:-20}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       SESSION_JWT_SECRET: ${SESSION_JWT_SECRET:?SESSION_JWT_SECRET is required}
@@ -198,15 +211,23 @@ services:
       context: .
       dockerfile: apps/worker/Dockerfile
     restart: unless-stopped
+    # No published host port (WORKER_HEALTH_PORT is internal-only), so
+    # unlike api above, WORKER_REPLICAS > 1 needs no reverse-proxy/port
+    # rework — it's safe to scale out on its own.
+    deploy:
+      replicas: ${WORKER_REPLICAS:-1}
     environment:
       NODE_ENV: production
       # Sized higher than api's own connection_limit (10, see that
       # service's comment above): worker runs several concurrent BullMQ
       # workers (processing/extraction/embedding/sweep/kb-cleanup, each
       # with its own concurrency — apps/worker/src/env.ts), each opening
-      # its own withTenantTransaction connections. 10 + 15 = 25 total
-      # against Postgres's default max_connections=100 — see
-      # DEPLOYMENT.md for the full math.
+      # its own withTenantTransaction connections. Per-CONTAINER, same as
+      # api's own connection_limit — total worker connections are
+      # (WORKER_REPLICAS × WORKER_DB_CONNECTION_LIMIT). At the default
+      # replica count of 1 each: 10 (api) + 15 (worker) = 25 total against
+      # Postgres's default max_connections=100 — see DEPLOYMENT.md for the
+      # full formula and worked examples at higher replica counts.
       APP_DATABASE_URL: postgresql://raas_app:${POSTGRES_APP_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public&connection_limit=${WORKER_DB_CONNECTION_LIMIT:-15}&pool_timeout=${WORKER_DB_POOL_TIMEOUT_SECONDS:-20}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       S3_ENDPOINT: ${S3_ENDPOINT:-http://object-storage:9000}

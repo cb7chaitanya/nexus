@@ -26,6 +26,7 @@ guards) — there is no way to silently deploy with a blank secret.
 | `DB_STATEMENT_TIMEOUT`, `DB_IDLE_IN_TRANSACTION_TIMEOUT` | no (`30s` / `10s`) | postgres | Postgres-side backstops applied as `raas_app` role defaults. See [Database connection pool and timeouts](#database-connection-pool-and-timeouts). |
 | `API_DB_CONNECTION_LIMIT`, `API_DB_POOL_TIMEOUT_SECONDS` | no (`10` / `20`) | api | Prisma client connection pool sizing for `apps/api`. See [Database connection pool and timeouts](#database-connection-pool-and-timeouts). |
 | `WORKER_DB_CONNECTION_LIMIT`, `WORKER_DB_POOL_TIMEOUT_SECONDS` | no (`15` / `20`) | worker | Prisma client connection pool sizing for `apps/worker`. See [Database connection pool and timeouts](#database-connection-pool-and-timeouts). |
+| `API_REPLICAS`, `WORKER_REPLICAS` | no (`1` / `1`) | api, worker | Container replica counts (`deploy.replicas` in `docker-compose.prod.yml`). Raising `API_REPLICAS` above `1` also requires removing `api`'s fixed host port and fronting it with a reverse proxy — see [Database connection pool and timeouts](#database-connection-pool-and-timeouts). |
 | `REDIS_PASSWORD` | yes | redis, api, worker | Redis backs BullMQ job data and rate-limit counters in production — always password-protected, unlike the local dev stack. |
 | `WEB_ORIGIN` | yes | api | The one origin allowed to make credentialed cross-origin requests. Never a wildcard — see `docs/cors-csrf-policy.md`. |
 | `SESSION_JWT_SECRET` | yes | api | HMAC signing key for session JWTs. Generate with `openssl rand -base64 48`; never reuse the dev value. |
@@ -76,13 +77,41 @@ leaving headroom for Postgres's own reserved superuser connections, the
 short-lived `migrate` job, manual `psql` access during an incident, and
 room to raise these before they'd become the bottleneck.
 
-**Scaling past a single replica of `api` or `worker` requires revisiting
-this math** — two `api` replicas at the default `connection_limit=10`
-means 20 connections from `api` alone. Size
-`(api replicas × API_DB_CONNECTION_LIMIT) + (worker replicas ×
-WORKER_DB_CONNECTION_LIMIT)` to stay comfortably under `max_connections`
-(raising `max_connections` itself, via a custom `postgres` `command:`/config
-file, is the other lever — not configured by this stack today).
+**Scaling past a single replica of `api` or `worker`** is done via the
+`API_REPLICAS`/`WORKER_REPLICAS` env vars (both default `1`), wired to
+`deploy.replicas` on each service in `docker-compose.prod.yml`. Both pool
+settings above are **per container**, not per service — total connections
+scale with replica count, so the formula is:
+
+```
+total connections = (API_REPLICAS × API_DB_CONNECTION_LIMIT)
+                   + (WORKER_REPLICAS × WORKER_DB_CONNECTION_LIMIT)
+```
+
+Worked examples against the default `max_connections=100`:
+
+| `API_REPLICAS` | `WORKER_REPLICAS` | Connections used | Formula |
+|---|---|---|---|
+| 1 (default) | 1 (default) | 25 | `1×10 + 1×15` |
+| 2 | 1 | 35 | `2×10 + 1×15` |
+| 3 | 2 | 60 | `3×10 + 2×15` |
+
+Keep the total comfortably under `max_connections`, leaving headroom for
+Postgres's own reserved superuser connections, the short-lived `migrate`
+job, and manual `psql` access during an incident — either by lowering
+`API_DB_CONNECTION_LIMIT`/`WORKER_DB_CONNECTION_LIMIT` as replica counts
+go up, or by raising `max_connections` itself via a custom `postgres`
+`command:`/config file (the other lever — not configured by this stack
+today).
+
+**`api` has a fixed host port** (`"${API_PORT:-4000}:${API_PORT:-4000}"`
+in `docker-compose.prod.yml`), so `API_REPLICAS > 1` will fail to start
+("port is already allocated") unless that published port is first removed
+and `api` is put behind a reverse proxy that load-balances across the
+replicas instead — consistent with this file's own top-of-file note that
+it's infrastructure for the application tier, not an edge/ingress layer.
+`worker` has no published host port (`WORKER_HEALTH_PORT` is internal
+only), so `WORKER_REPLICAS > 1` needs no such rework.
 
 **2. Database-side timeouts (`DB_STATEMENT_TIMEOUT`/
 `DB_IDLE_IN_TRANSACTION_TIMEOUT`)** — applied as `raas_app` **role**
