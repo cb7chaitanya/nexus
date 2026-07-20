@@ -76,6 +76,45 @@ export const env = {
   // recover" doesn't take 30+ real seconds per run.
   WORKER_LOCK_DURATION_MS: Number(process.env.WORKER_LOCK_DURATION_MS ?? 30_000),
   WORKER_STALLED_INTERVAL_MS: Number(process.env.WORKER_STALLED_INTERVAL_MS ?? 30_000),
+  // Per-queue concurrency (see index.ts's sharedWorkerOptions usage) —
+  // previously hardcoded, now tunable per deployment without a redeploy.
+  // Defaults match the values this codebase already shipped with:
+  // processing just orchestrates (cheap, high concurrency is fine),
+  // extraction buffers a whole PDF into memory per job (see
+  // WORKER_MAX_DOCUMENT_BYTES above — concurrency is the OTHER half of
+  // that memory-safety budget), embedding/kb-cleanup are I/O-bound against
+  // an external provider/S3 rather than CPU/memory-bound, and sweep is
+  // deliberately serialized (one pass at a time).
+  WORKER_PROCESSING_CONCURRENCY: requirePositiveInt("WORKER_PROCESSING_CONCURRENCY", process.env.WORKER_PROCESSING_CONCURRENCY, 10),
+  WORKER_EXTRACTION_CONCURRENCY: requirePositiveInt("WORKER_EXTRACTION_CONCURRENCY", process.env.WORKER_EXTRACTION_CONCURRENCY, 4),
+  WORKER_EMBEDDING_CONCURRENCY: requirePositiveInt("WORKER_EMBEDDING_CONCURRENCY", process.env.WORKER_EMBEDDING_CONCURRENCY, 2),
+  WORKER_SWEEP_CONCURRENCY: requirePositiveInt("WORKER_SWEEP_CONCURRENCY", process.env.WORKER_SWEEP_CONCURRENCY, 1),
+  WORKER_KB_CLEANUP_CONCURRENCY: requirePositiveInt("WORKER_KB_CLEANUP_CONCURRENCY", process.env.WORKER_KB_CLEANUP_CONCURRENCY, 2),
+  // Generic per-job-attempt wall-clock ceiling (see lib/job-timeout.ts),
+  // applied uniformly to every processor at the Worker construction site
+  // in index.ts — not a change to any processor itself. A backstop against
+  // a job that's somehow still running well past any reasonable duration
+  // for its stage (a genuinely hung dependency with no timeout of its own,
+  // a bug) holding a concurrency slot — and the memory of whatever it
+  // downloaded — forever. Every real external call in this codebase
+  // already has its own, tighter timeout (OpenAI's connectTimeoutMs, the
+  // health server's CHECK_TIMEOUT_MS); this is the outermost, coarsest
+  // layer, not a replacement for those.
+  WORKER_MAX_JOB_DURATION_MS: requirePositiveInt("WORKER_MAX_JOB_DURATION_MS", process.env.WORKER_MAX_JOB_DURATION_MS, 10 * 60 * 1000),
+  // How long SIGTERM/SIGINT waits for active jobs to finish before giving
+  // up and exiting anyway (see lib/shutdown.ts) — bounded so this process
+  // always terminates on its own within a known window rather than
+  // relying on the orchestrator's own SIGKILL grace period (commonly
+  // ~30s) to end it uncleanly. Keep this comfortably below whatever that
+  // external grace period actually is in production.
+  WORKER_SHUTDOWN_TIMEOUT_MS: requirePositiveInt("WORKER_SHUTDOWN_TIMEOUT_MS", process.env.WORKER_SHUTDOWN_TIMEOUT_MS, 25_000),
+  // Bounds the initial `redisConnection.ping()` at startup (index.ts) —
+  // ioredis's default retry behavior queues commands and retries
+  // connecting indefinitely with backoff, which means a genuinely
+  // misconfigured REDIS_URL would otherwise hang main() forever instead of
+  // failing loudly, unlike every other required dependency in this file
+  // (S3, OPENAI_API_KEY) which fails fast via requireEnv above.
+  WORKER_REDIS_CONNECT_TIMEOUT_MS: requirePositiveInt("WORKER_REDIS_CONNECT_TIMEOUT_MS", process.env.WORKER_REDIS_CONNECT_TIMEOUT_MS, 10_000),
   // Stuck-document sweep (docs/architecture.md §6.2, decisions.md R8): a
   // scheduled job finds Documents sitting in QUEUED/PROCESSING longer
   // than STUCK_DOCUMENT_THRESHOLD_MS and fails them visibly. The sweep
