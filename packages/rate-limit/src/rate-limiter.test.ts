@@ -119,6 +119,171 @@ describe("peekLimit", () => {
   });
 });
 
+describe("reserve", () => {
+  it("allows a reservation that fits and reports the reduced remaining budget", async () => {
+    const identifier = uniqueId();
+    const result = await limiter.reserve({ identifier, amount: 400, limit: 1000, window: 60 });
+
+    expect(result).toMatchObject({ allowed: true, reserved: 400, remaining: 600 });
+  });
+
+  it("rejects a reservation that would push the total over the limit, reporting reserved: 0", async () => {
+    const identifier = uniqueId();
+    await limiter.reserve({ identifier, amount: 700, limit: 1000, window: 60 });
+
+    const result = await limiter.reserve({ identifier, amount: 500, limit: 1000, window: 60 });
+
+    expect(result.allowed).toBe(false);
+    expect(result.reserved).toBe(0);
+    expect(result.remaining).toBe(300);
+    expect(result.retryAfterSeconds).toBeGreaterThan(0);
+  });
+
+  it("leaves the counter completely untouched on rejection — unlike checkLimit, a rejected reservation must not leak into the stored total", async () => {
+    const identifier = uniqueId();
+    await limiter.reserve({ identifier, amount: 900, limit: 1000, window: 60 });
+
+    // Would push 900 + 200 = 1100 > 1000 — rejected.
+    await limiter.reserve({ identifier, amount: 200, limit: 1000, window: 60 });
+
+    const raw = await redis.get(`ratelimit:${identifier}`);
+    expect(raw).toBe("900");
+
+    // Proves the rejection above added nothing: a reservation that fits
+    // in the remaining 100 still succeeds afterward.
+    const stillFits = await limiter.reserve({ identifier, amount: 100, limit: 1000, window: 60 });
+    expect(stillFits.allowed).toBe(true);
+    expect(stillFits.remaining).toBe(0);
+  });
+
+  it("allows a reservation landing exactly on the limit", async () => {
+    const identifier = uniqueId();
+    const result = await limiter.reserve({ identifier, amount: 1000, limit: 1000, window: 60 });
+
+    expect(result.allowed).toBe(true);
+    expect(result.remaining).toBe(0);
+  });
+
+  it("sets the window's expiry only on the first reservation, fixed-window style", async () => {
+    const identifier = uniqueId();
+    const first = await limiter.reserve({ identifier, amount: 100, limit: 1000, window: 60 });
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const second = await limiter.reserve({ identifier, amount: 100, limit: 1000, window: 60 });
+
+    expect(second.resetAt.getTime()).toBeLessThan(first.resetAt.getTime() + 200);
+  });
+
+  it("10 simultaneous reservations near the budget limit: the total ever granted never exceeds the configured limit, regardless of arrival order", async () => {
+    const identifier = uniqueId();
+    // 10 concurrent callers each asking for 100 against a 500 budget —
+    // if this raced like the old peek-then-record design, most or all 10
+    // could see a stale "under budget" state and all be granted, letting
+    // the total reserved run to 1000 (2x over). The atomic reserve script
+    // must let exactly 5 of these 10 fit (500 / 100), no matter which 5.
+    const results = await Promise.all(Array.from({ length: 10 }, () => limiter.reserve({ identifier, amount: 100, limit: 500, window: 60 })));
+
+    const allowed = results.filter((r) => r.allowed);
+    const rejected = results.filter((r) => !r.allowed);
+
+    expect(allowed).toHaveLength(5);
+    expect(rejected).toHaveLength(5);
+
+    const totalReserved = allowed.reduce((sum, r) => sum + r.reserved, 0);
+    expect(totalReserved).toBe(500);
+    expect(totalReserved).toBeLessThanOrEqual(500);
+
+    // The stored counter must match the sum of grants exactly — nothing
+    // extra leaked in from any of the 5 rejected attempts.
+    const raw = await redis.get(`ratelimit:${identifier}`);
+    expect(Number(raw)).toBe(500);
+  });
+
+  it("20 simultaneous reservations at an amount that never divides the limit evenly: total granted still never exceeds it", async () => {
+    const identifier = uniqueId();
+    // 500 / 137 = 3.64... — at most 3 can ever fit (411), a 4th (548)
+    // would exceed 500. Deliberately non-round numbers so this isn't
+    // accidentally passing only because of a convenient exact multiple.
+    const results = await Promise.all(Array.from({ length: 20 }, () => limiter.reserve({ identifier, amount: 137, limit: 500, window: 60 })));
+
+    const allowed = results.filter((r) => r.allowed);
+    const totalReserved = allowed.reduce((sum, r) => sum + r.reserved, 0);
+
+    expect(allowed).toHaveLength(3);
+    expect(totalReserved).toBe(411);
+    expect(totalReserved).toBeLessThanOrEqual(500);
+  });
+});
+
+describe("settle", () => {
+  it("tops up the counter when the delta is positive (actual usage exceeded the reservation)", async () => {
+    const identifier = uniqueId();
+    await limiter.reserve({ identifier, amount: 200, limit: 1000, window: 60 });
+
+    await limiter.settle({ identifier, delta: 50, window: 60 });
+
+    const raw = await redis.get(`ratelimit:${identifier}`);
+    expect(raw).toBe("250");
+  });
+
+  it("refunds the counter when the delta is negative (unused reservation)", async () => {
+    const identifier = uniqueId();
+    await limiter.reserve({ identifier, amount: 200, limit: 1000, window: 60 });
+
+    await limiter.settle({ identifier, delta: -120, window: 60 });
+
+    const raw = await redis.get(`ratelimit:${identifier}`);
+    expect(raw).toBe("80");
+  });
+
+  it("is a no-op when the delta is zero", async () => {
+    const identifier = uniqueId();
+    await limiter.reserve({ identifier, amount: 200, limit: 1000, window: 60 });
+
+    await limiter.settle({ identifier, delta: 0, window: 60 });
+
+    const raw = await redis.get(`ratelimit:${identifier}`);
+    expect(raw).toBe("200");
+  });
+
+  it("never lets the counter go negative — clamps at 0 even if a refund somehow exceeds what was reserved", async () => {
+    const identifier = uniqueId();
+    await limiter.reserve({ identifier, amount: 50, limit: 1000, window: 60 });
+
+    // A refund larger than what's actually stored should never be
+    // possible by construction (see settleDailyBudget's doc comment),
+    // but the primitive itself must not produce a negative counter
+    // regardless.
+    await limiter.settle({ identifier, delta: -500, window: 60 });
+
+    const raw = await redis.get(`ratelimit:${identifier}`);
+    expect(raw).toBe("0");
+  });
+
+  it("re-establishes a TTL if the key had none (defensive: a settle arriving after the reservation's window already expired)", async () => {
+    const identifier = uniqueId();
+    await redis.set(`ratelimit:${identifier}`, "100");
+    // No EXPIRE set — simulates a key that outlived its original window.
+
+    await limiter.settle({ identifier, delta: 10, window: 120 });
+
+    const ttl = await redis.ttl(`ratelimit:${identifier}`);
+    expect(ttl).toBeGreaterThan(0);
+    expect(ttl).toBeLessThanOrEqual(120);
+  });
+
+  it("round-trips correctly: reserve a worst-case estimate, then settle down to a smaller real usage, leaving exactly the real amount", async () => {
+    const identifier = uniqueId();
+    const reservation = await limiter.reserve({ identifier, amount: 1024, limit: 10_000, window: 60 });
+    expect(reservation.allowed).toBe(true);
+
+    const actualUsage = 340;
+    await limiter.settle({ identifier, delta: actualUsage - reservation.reserved, window: 60 });
+
+    const raw = await redis.get(`ratelimit:${identifier}`);
+    expect(raw).toBe("340");
+  });
+});
+
 describe("isolation between test keys", () => {
   beforeEach(() => {
     // Every test above uses a fresh randomUUID()-based identifier, so
