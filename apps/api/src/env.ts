@@ -101,5 +101,16 @@ export const env = {
   // held transaction. Below the threshold, deletion happens synchronously
   // and returns 204 immediately.
   KB_DELETION_ASYNC_CHUNK_THRESHOLD: Number(process.env.KB_DELETION_ASYNC_CHUNK_THRESHOLD ?? 5000),
+  // How long SIGTERM/SIGINT waits for Fastify's close() to finish on its
+  // own — i.e. for every open connection, including a hijacked, actively
+  // streaming SSE response from POST /kb/:id/chat, to end — before giving
+  // up and exiting anyway (see lib/shutdown.ts). Bounded so this process
+  // always terminates on its own within a known window rather than
+  // relying on the orchestrator's SIGKILL grace period (Docker's default
+  // is 10s, comfortably shorter than a real chat generation can take) to
+  // end it uncleanly. Same default and reasoning as apps/worker's own
+  // WORKER_SHUTDOWN_TIMEOUT_MS — keep this comfortably below whatever
+  // stop_grace_period is actually configured in production.
+  API_SHUTDOWN_TIMEOUT_MS: requirePositiveInt("API_SHUTDOWN_TIMEOUT_MS", process.env.API_SHUTDOWN_TIMEOUT_MS, 25_000),
   NODE_ENV: process.env.NODE_ENV ?? "development",
 };
