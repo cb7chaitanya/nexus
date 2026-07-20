@@ -1,8 +1,10 @@
 import { ApiError, completeDocumentSchema, documentIdQuerySchema, parseOrThrow, retryDocumentSchema } from "@raas/shared";
 import { withTenantTransaction } from "@raas/db";
+import { captureException } from "@raas/observability";
 import type { FastifyInstance } from "fastify";
 
 import { DOCUMENT_METADATA_BODY_LIMIT_BYTES } from "../lib/body-limits.js";
+import { enqueueDocumentStorageCleanup } from "../lib/document-cleanup.js";
 import { enqueueDocumentIngestion } from "../lib/ingestion-flow.js";
 import { requireMembership } from "../lib/membership.js";
 import { checkDocumentQuota, checkIngestionRateLimit } from "../lib/rate-limit.js";
@@ -156,12 +158,31 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
       return tx.document.findUniqueOrThrow({ where: { id: documentId } });
     });
 
-    // Best-effort, after the DB truth commits — same ordering principle
-    // as DELETE /kb/:id's synchronous path: deleteObjects treats a
-    // missing key as success (S3's own semantics), so this is safe to
-    // retry if it ever needs to be, and never leaves the DB claiming a
-    // deletion that didn't actually happen.
-    await deleteObjects([document.storageKey]);
+    // Attempted inline, after the DB truth commits, for the common-case
+    // fast 204 — but unlike before, a failure here no longer orphans the
+    // object with no way to retry it. The Document row stays around
+    // permanently regardless (soft-deleted above, kept as an audit
+    // record — see the transaction's own comment), so its storageKey is
+    // never lost the way an un-cascaded KnowledgeBase's documents would
+    // be; a failure here just falls back to a durably-retried worker job
+    // (attempts: 3, exponential backoff — see lib/document-cleanup.ts)
+    // instead of leaving a billable object with no record left to clean
+    // it up. The client still sees 204: the DB truth they asked for
+    // (the document is gone) already committed either way, and object
+    // storage cleanup is an internal hygiene concern, not something a
+    // caller needs surfaced as an error — same "best-effort" framing the
+    // old comment here had, just now actually backed by a retry instead
+    // of only being aspirational.
+    try {
+      await deleteObjects([document.storageKey]);
+    } catch (err) {
+      request.log.error(
+        { err, documentId, organizationId: input.organizationId, storageKey: document.storageKey },
+        "inline S3 cleanup failed during document delete — falling back to the async retry job",
+      );
+      captureException(err, { documentId, organizationId: input.organizationId, storageKey: document.storageKey, route: "DELETE /documents/:id" });
+      await enqueueDocumentStorageCleanup({ organizationId: input.organizationId, documentId });
+    }
 
     reply.status(204).send();
   });

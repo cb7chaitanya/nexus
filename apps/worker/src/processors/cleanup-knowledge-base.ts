@@ -15,16 +15,16 @@ export interface CleanupKnowledgeBaseJobData {
  * status: DELETING and therefore already invisible to every other route
  * by the time this job runs.
  *
- * S3 objects are deleted BEFORE the KnowledgeBase row — deliberately the
- * opposite order from a synchronous small-KB delete's convenience, and
- * load-bearing here: if this job fails/retries partway through, the
- * Document rows (and therefore the storageKey list) must still exist so
- * the retry can re-list them. Deleting the KB row first would cascade-
- * delete every Document row (onDelete: Cascade) and permanently lose the
- * only record of which S3 objects need cleaning up, leaking them forever
- * with no way to find them again. Re-deleting an S3 key a previous
- * attempt already removed is a no-op, not an error, which is what makes
- * retrying this safe.
+ * S3 objects are deleted BEFORE the KnowledgeBase row — the same
+ * ordering principle DELETE /kb/:id's synchronous (small-KB) path now
+ * also follows (see knowledge-bases.ts), and load-bearing here: if this
+ * job fails/retries partway through, the Document rows (and therefore
+ * the storageKey list) must still exist so the retry can re-list them.
+ * Deleting the KB row first would cascade-delete every Document row
+ * (onDelete: Cascade) and permanently lose the only record of which S3
+ * objects need cleaning up, leaking them forever with no way to find
+ * them again. Re-deleting an S3 key a previous attempt already removed
+ * is a no-op, not an error, which is what makes retrying this safe.
  */
 export async function cleanupKnowledgeBaseProcessor(job: Job<CleanupKnowledgeBaseJobData>): Promise<{ documentsDeleted: number }> {
   const { organizationId, knowledgeBaseId } = job.data;

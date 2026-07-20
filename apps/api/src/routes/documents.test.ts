@@ -10,7 +10,7 @@ import { prisma, withTenantTransaction } from "@raas/db";
 import { JOB_NAMES, PLATFORM_EMBEDDING_DIM, QUEUE_NAMES } from "@raas/shared";
 import { Queue } from "bullmq";
 import type { FastifyInstance } from "fastify";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { buildApp } from "../app.js";
 import { env } from "../env.js";
@@ -513,6 +513,47 @@ describe("document routes", () => {
       expect(deleted.status).toBe("DELETED");
       expect(deleted.deletedAt).not.toBeNull();
       expect(deleted.fileName).toBe(stored.fileName);
+    });
+
+    it("falls back to a retry job when inline S3 cleanup fails, without orphaning the object or losing the DB truth", async () => {
+      const { documentId, uploadUrl, uploadFields } = await presignDocument(app, ownerCookie, organizationId, knowledgeBaseId);
+      await uploadToPresignedPost(uploadUrl, uploadFields, "will fail to delete inline");
+      const stored = await withTenantTransaction(organizationId, (tx) => tx.document.findUniqueOrThrow({ where: { id: documentId } }));
+
+      const sendSpy = vi.spyOn(s3, "send").mockRejectedValueOnce(new Error("simulated S3 outage"));
+
+      const response = await app.inject({
+        method: "DELETE",
+        url: `/documents/${documentId}?organizationId=${organizationId}`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      });
+      sendSpy.mockRestore();
+
+      // The DB truth (document is deleted) still commits and is still
+      // what the client sees — S3 cleanup failing is an internal hygiene
+      // concern, not something surfaced as a request failure (see
+      // documents.ts's own comment on this route).
+      expect(response.statusCode).toBe(204);
+
+      // Not orphaned: the object is still genuinely there (nothing was
+      // lost track of), and the Document row — kept forever as an audit
+      // record regardless of outcome — still has the storageKey a retry
+      // needs.
+      expect(await objectExists(stored.storageKey)).toBe(true);
+      const afterFailure = await withTenantTransaction(organizationId, (tx) => tx.document.findUniqueOrThrow({ where: { id: documentId } }));
+      expect(afterFailure.status).toBe("DELETED");
+      expect(afterFailure.storageKey).toBe(stored.storageKey);
+
+      // Retry is possible: the fallback job was actually enqueued, under
+      // a deterministic id keyed on documentId (see lib/document-cleanup.ts).
+      const documentCleanupQueue = new Queue(QUEUE_NAMES.documentCleanup, { connection: redis });
+      try {
+        const job = await documentCleanupQueue.getJob(`${JOB_NAMES.cleanupDocumentStorage}-${documentId}`);
+        expect(job).toBeDefined();
+        expect(job?.data).toMatchObject({ organizationId, documentId });
+      } finally {
+        await documentCleanupQueue.close();
+      }
     });
 
     it("returns 404 on a second delete of an already-deleted document", async () => {

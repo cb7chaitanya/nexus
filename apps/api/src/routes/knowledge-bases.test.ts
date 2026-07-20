@@ -5,13 +5,17 @@
  */
 import { randomUUID } from "node:crypto";
 
+import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { prisma, withTenantTransaction } from "@raas/db";
-import { PLATFORM_EMBEDDING_DIM } from "@raas/shared";
+import { JOB_NAMES, PLATFORM_EMBEDDING_DIM, QUEUE_NAMES } from "@raas/shared";
+import { Queue } from "bullmq";
 import type { FastifyInstance } from "fastify";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { buildApp } from "../app.js";
+import { env } from "../env.js";
 import { redis } from "../lib/redis.js";
+import { objectExists, s3 } from "../lib/storage.js";
 import { SESSION_COOKIE_NAME } from "../plugins/auth-guard.js";
 
 async function signup(
@@ -624,6 +628,54 @@ describe("knowledge base routes", () => {
 
       const stillInDb = await withTenantTransaction(organizationId, (tx) => tx.knowledgeBase.findUnique({ where: { id: kbId } }));
       expect(stillInDb?.status).toBe("DELETING");
+    });
+
+    it("small KB: when inline S3 cleanup fails, falls back to the async retry job (202) instead of orphaning the objects", async () => {
+      const kbId = await createKb(ownerCookie, organizationId, "S3-Failure Delete KB");
+      const storageKey = `${organizationId}/${kbId}/${randomUUID()}-doc.pdf`;
+      await s3.send(new PutObjectCommand({ Bucket: env.S3_BUCKET, Key: storageKey, Body: "fake pdf bytes", ContentType: "application/pdf" }));
+      const document = await withTenantTransaction(organizationId, (tx) =>
+        tx.document.create({
+          data: { organizationId, knowledgeBaseId: kbId, fileName: "doc.pdf", mimeType: "application/pdf", sizeBytes: 15, storageKey, status: "READY" },
+        }),
+      );
+
+      const sendSpy = vi.spyOn(s3, "send").mockRejectedValueOnce(new Error("simulated S3 outage"));
+
+      const response = await app.inject({
+        method: "DELETE",
+        url: `/kb/${kbId}?organizationId=${organizationId}`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      });
+      sendSpy.mockRestore();
+
+      // Degrades to the same 202/DELETING contract the large-KB path
+      // already has — cleanup didn't finish synchronously, so it's
+      // handed off, exactly like the large-KB case above.
+      expect(response.statusCode).toBe(202);
+      expect(response.json()).toEqual({ id: kbId, status: "DELETING" });
+
+      // Not orphaned: the KB row was never cascaded (only flipped to
+      // DELETING), so the Document row — and therefore the storageKey a
+      // retry needs — is still there, and the S3 object itself is still
+      // genuinely present (nothing was lost track of).
+      const stillInDb = await withTenantTransaction(organizationId, (tx) => tx.knowledgeBase.findUnique({ where: { id: kbId } }));
+      expect(stillInDb?.status).toBe("DELETING");
+      const stillHasDocument = await withTenantTransaction(organizationId, (tx) => tx.document.findUnique({ where: { id: document.id } }));
+      expect(stillHasDocument).not.toBeNull();
+      expect(await objectExists(storageKey)).toBe(true);
+
+      // Retry is possible: the same job the large-KB path uses was
+      // actually enqueued, under its deterministic id (see
+      // lib/kb-cleanup.ts).
+      const kbCleanupQueue = new Queue(QUEUE_NAMES.kbCleanup, { connection: redis });
+      try {
+        const job = await kbCleanupQueue.getJob(`${JOB_NAMES.cleanupKnowledgeBase}-${kbId}`);
+        expect(job).toBeDefined();
+        expect(job?.data).toMatchObject({ organizationId, knowledgeBaseId: kbId });
+      } finally {
+        await kbCleanupQueue.close();
+      }
     });
   });
 });

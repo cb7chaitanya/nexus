@@ -9,6 +9,7 @@ import {
   updateKnowledgeBaseSchema,
 } from "@raas/shared";
 import { withTenantTransaction } from "@raas/db";
+import { captureException } from "@raas/observability";
 import type { FastifyInstance } from "fastify";
 
 import { env } from "../env.js";
@@ -248,14 +249,17 @@ export async function knowledgeBaseRoutes(app: FastifyInstance): Promise<void> {
       throw ApiError.forbidden("This action requires the ADMIN role or higher");
     }
 
-    // Chunk count decides sync vs. async (see env.ts's
-    // KB_DELETION_ASYNC_CHUNK_THRESHOLD): below it, the cascade delete
-    // (KnowledgeBase -> Document -> DocumentChunk, all onDelete: Cascade)
-    // plus S3 cleanup happen inline and this returns 204. At or above it,
-    // this only flips status to DELETING (making the KB invisible to
-    // every other route immediately) and hands the actual row/S3 cleanup
-    // to an async worker job — see lib/kb-cleanup.ts and apps/worker's
-    // cleanup-knowledge-base processor.
+    // Chunk count decides whether cleanup is attempted inline for a fast
+    // 204, or handed straight to the async worker job (see env.ts's
+    // KB_DELETION_ASYNC_CHUNK_THRESHOLD — a large KB's S3 delete call
+    // alone risks a request timeout). Either way the KB is only ever
+    // flipped to DELETING here, never cascade-deleted in this
+    // transaction — making it invisible to every other route immediately
+    // (assertActiveKnowledgeBase above) without yet destroying the
+    // Document rows that record which S3 objects need cleaning up. See
+    // below for why the actual row cascade is deferred until S3 cleanup
+    // is confirmed, matching apps/worker's cleanup-knowledge-base
+    // processor's own S3-before-DB ordering.
     const outcome = await withTenantTransaction(input.organizationId, async (tx) => {
       const existing = await tx.knowledgeBase.findUnique({ where: { id: knowledgeBaseId } });
       assertActiveKnowledgeBase(existing);
@@ -267,14 +271,13 @@ export async function knowledgeBaseRoutes(app: FastifyInstance): Promise<void> {
         return { async: true as const, storageKeys: [] as string[] };
       }
 
-      // Storage keys are read BEFORE the cascade delete — once the
-      // Document rows are gone, so is the only record of which S3
-      // objects belonged to this KB. DELETED documents excluded: their
-      // object was already removed by DELETE /documents/:id, so
-      // re-deleting it here would just be redundant (harmless, since S3
-      // treats deleting a missing key as success, but pointless).
+      // Storage keys read now, before anything destructive — DELETED
+      // documents excluded since their object was already removed by
+      // DELETE /documents/:id (re-deleting it would be harmless but
+      // pointless). The row itself is NOT cascade-deleted here anymore —
+      // see below.
       const documents = await tx.document.findMany({ where: { knowledgeBaseId, status: { not: "DELETED" } }, select: { storageKey: true } });
-      await tx.knowledgeBase.delete({ where: { id: knowledgeBaseId } });
+      await tx.knowledgeBase.update({ where: { id: knowledgeBaseId }, data: { status: "DELETING" } });
       return { async: false as const, storageKeys: documents.map((d) => d.storageKey) };
     });
 
@@ -284,10 +287,34 @@ export async function knowledgeBaseRoutes(app: FastifyInstance): Promise<void> {
       return;
     }
 
-    // Best-effort, after the DB truth (the KB and its rows are already
-    // gone) — same ordering principle as enqueueDocumentIngestion running
-    // only after its own DB transition commits.
-    await deleteObjects(outcome.storageKeys);
+    // Small KB: attempt S3 cleanup inline for the common-case fast 204.
+    // The KnowledgeBase row is still just DELETING at this point, not yet
+    // cascaded — if this succeeds, the cascade below is safe (S3 is
+    // confirmed clean). If it throws — a transient network blip, S3/MinIO
+    // down, a permission error — the row stays DELETING with its Document
+    // rows intact, and this falls back to the exact same retried worker
+    // job the large-KB path already uses (attempts: 3, exponential
+    // backoff), which re-lists those still-alive rows and finishes the
+    // job. This is the actual fix for the ordering bug this ticket
+    // describes: previously the cascade ran BEFORE this call, so a
+    // failure here permanently orphaned the S3 objects with no DB record
+    // left to retry against.
+    try {
+      await deleteObjects(outcome.storageKeys);
+    } catch (err) {
+      request.log.error(
+        { err, knowledgeBaseId, organizationId: input.organizationId },
+        "inline S3 cleanup failed during small-KB delete — falling back to the async retry job",
+      );
+      captureException(err, { knowledgeBaseId, organizationId: input.organizationId, route: "DELETE /kb/:id" });
+      await enqueueKnowledgeBaseCleanup({ organizationId: input.organizationId, knowledgeBaseId });
+      reply.status(202).send({ id: knowledgeBaseId, status: "DELETING" });
+      return;
+    }
+
+    // S3 confirmed clean — now safe to cascade (KnowledgeBase -> Document
+    // -> DocumentChunk -> Conversation, all onDelete: Cascade).
+    await withTenantTransaction(input.organizationId, (tx) => tx.knowledgeBase.delete({ where: { id: knowledgeBaseId } }));
     reply.status(204).send();
   });
 }

@@ -11,7 +11,7 @@ import { CreateBucketCommand, HeadBucketCommand, HeadObjectCommand, PutObjectCom
 import { prisma, withTenantTransaction } from "@raas/db";
 import { JOB_NAMES, QUEUE_NAMES } from "@raas/shared";
 import { Queue, Worker } from "bullmq";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { env } from "../env.js";
 import { redisConnection } from "../lib/redis.js";
@@ -149,5 +149,80 @@ describe("cleanupKnowledgeBaseProcessor", () => {
       const kb = await withTenantTransaction(organizationId, (tx) => tx.knowledgeBase.findUnique({ where: { id: knowledgeBaseId } }));
       return kb === null;
     });
+  });
+
+  it("recovers from a partial prior cleanup attempt — some objects already deleted, others not — removing the remainder and then the KB row", async () => {
+    const { knowledgeBaseId, storageKeys } = await createKbWithDocuments(3);
+
+    // Simulates a prior attempt that got partway through before failing
+    // (a crash, a timeout, a transient error partway through a
+    // multi-batch delete) — only ONE of the three objects is gone, the
+    // rest are still there. The processor has no per-key checkpoint of
+    // its own; it just re-lists every still-present Document and
+    // re-attempts deleting all of them, so this is exactly the same code
+    // path as a full retry, not special-cased partial-recovery logic.
+    await deleteObjects([storageKeys[0]!]);
+    expect(await objectExists(storageKeys[0]!)).toBe(false);
+    expect(await objectExists(storageKeys[1]!)).toBe(true);
+    expect(await objectExists(storageKeys[2]!)).toBe(true);
+
+    await queue.add(JOB_NAMES.cleanupKnowledgeBase, { organizationId, knowledgeBaseId });
+
+    await waitUntil(async () => {
+      const kb = await withTenantTransaction(organizationId, (tx) => tx.knowledgeBase.findUnique({ where: { id: knowledgeBaseId } }));
+      return kb === null;
+    });
+
+    for (const key of storageKeys) {
+      expect(await objectExists(key)).toBe(false);
+    }
+  });
+
+  it("S3 failure during deletion: the job throws and the KB row (with its Document rows) survives intact for a retry", async () => {
+    const { knowledgeBaseId, storageKeys } = await createKbWithDocuments(2);
+
+    // Pauses the live worker (constructed in beforeAll, already
+    // consuming this queue) for the duration of this test — it fetches
+    // jobs the instant they're added, which would otherwise race this
+    // test's own direct, mock-controlled invocation of the processor
+    // below: whichever of the two reaches deleteObjects first "wins" the
+    // single mocked rejection, and the other proceeds against the real,
+    // unmocked S3 client, silently deleting the objects for real and
+    // making this test flaky rather than deterministic.
+    await worker.pause();
+    try {
+      // Simulates a genuine S3-side failure (network error, permission
+      // error, an outage) rather than a partial per-key result — the
+      // whole call rejects, none of the objects are touched.
+      const sendSpy = vi.spyOn(s3, "send").mockRejectedValueOnce(new Error("simulated S3 outage"));
+      const job = await queue.add(JOB_NAMES.cleanupKnowledgeBase, { organizationId, knowledgeBaseId });
+      await expect(cleanupKnowledgeBaseProcessor(job)).rejects.toThrow("simulated S3 outage");
+      sendSpy.mockRestore();
+
+      // Not lost: deleteObjects throwing happens BEFORE the
+      // KnowledgeBase row delete (see the processor's own S3-before-DB
+      // doc comment), so the row — and every Document row recording
+      // which S3 objects need cleaning up — is still exactly as it was,
+      // and the objects themselves are still genuinely present in the
+      // bucket.
+      const stillInDb = await withTenantTransaction(organizationId, (tx) => tx.knowledgeBase.findUnique({ where: { id: knowledgeBaseId } }));
+      expect(stillInDb).not.toBeNull();
+      const stillHasDocuments = await withTenantTransaction(organizationId, (tx) => tx.document.findMany({ where: { knowledgeBaseId } }));
+      expect(stillHasDocuments).toHaveLength(2);
+      for (const key of storageKeys) {
+        expect(await objectExists(key)).toBe(true);
+      }
+
+      // Retry recovers: re-running the identical job (S3 no longer
+      // mocked) finishes the job that failed above.
+      await cleanupKnowledgeBaseProcessor(job);
+      const afterRetry = await withTenantTransaction(organizationId, (tx) => tx.knowledgeBase.findUnique({ where: { id: knowledgeBaseId } }));
+      expect(afterRetry).toBeNull();
+      for (const key of storageKeys) {
+        expect(await objectExists(key)).toBe(false);
+      }
+    } finally {
+      await worker.resume();
+    }
   });
 });
