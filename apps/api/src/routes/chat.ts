@@ -44,8 +44,25 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
     // Steps 1-3 of the ticket's chat flow: create/find conversation, load
     // history, retrieve context. Everything here can still fail with a
     // normal JSON error response — the response only commits to SSE once
-    // this transaction (and therefore retrieval) has actually succeeded.
-    const { conversation, history, assembled } = await withTenantTransaction(input.organizationId, async (tx) => {
+    // generation actually starts below.
+    //
+    // Deliberately THREE sequential steps, not one transaction wrapping
+    // all of retrieval (as this used to be): embedQuery (a real OpenAI
+    // call) and getReranker().rerank() (a no-op today via
+    // IdentityReranker, but swappable to a real hosted reranking API via
+    // getReranker() — see that call site's own comment) must never run
+    // inside a Postgres transaction. Holding a pooled connection open
+    // across a third-party network round-trip — including that call's
+    // own internal retry/backoff — for however long it takes is a real
+    // production risk under concurrent load or provider degradation, the
+    // same reason apps/worker's embed-chunks processor already keeps its
+    // own provider call outside its persistence transaction. Every
+    // RLS-scoped table this route touches is still only ever queried
+    // through withTenantTransaction (unchanged — see @raas/db's tenant.ts
+    // for why that's the only sanctioned way); there are just two of them
+    // now instead of one, with the OpenAI call happening in the gap
+    // between.
+    const { conversation, history } = await withTenantTransaction(input.organizationId, async (tx) => {
       const knowledgeBase = await tx.knowledgeBase.findUnique({ where: { id: knowledgeBaseId } });
       if (!knowledgeBase) {
         throw ApiError.notFound("Knowledge base not found");
@@ -61,28 +78,35 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
 
       const history = await loadConversationHistory(tx, conversation.id, env.CHAT_HISTORY_MESSAGE_LIMIT);
 
-      // Same model the KB's chunks were embedded with — retrieval never
-      // lets the caller pick a different one (architecture.md §4.6).
-      // Wrapped with the same daily embedding-token budget guard the
-      // ingestion pipeline uses (see @raas/usage's withEmbeddingBudgetGuard)
-      // — a query embedding is small, but it's still a real OpenAI call
-      // billed against the org's budget.
-      const queryEmbedding = await embedQuery(await getBudgetGuardedEmbeddingProvider(input.organizationId), input.message);
-      const candidates = await searchSimilarChunks(tx, {
+      return { conversation, history };
+    });
+
+    // Same model the KB's chunks were embedded with — retrieval never
+    // lets the caller pick a different one (architecture.md §4.6).
+    // Wrapped with the same daily embedding-token budget guard the
+    // ingestion pipeline uses (see @raas/usage's withEmbeddingBudgetGuard)
+    // — a query embedding is small, but it's still a real OpenAI call
+    // billed against the org's budget. No tx here — see this block's
+    // opening comment.
+    const queryEmbedding = await embedQuery(await getBudgetGuardedEmbeddingProvider(input.organizationId), input.message);
+
+    const candidates = await withTenantTransaction(input.organizationId, (tx) =>
+      searchSimilarChunks(tx, {
         organizationId: input.organizationId,
         knowledgeBaseId,
         queryEmbedding,
         limit: TOP_K,
-      });
+      }),
+    );
 
-      // retrieve -> rerank -> assemble context -> LLM (architecture.md
-      // §4.7). IdentityReranker (the current default) returns candidates
-      // unchanged; the pipeline shape is what makes a real reranker later
-      // a config change in getReranker(), not an edit here.
-      const reranked = await getReranker().rerank({ query: input.message, chunks: candidates });
-
-      return { conversation, history, assembled: assembleContext(reranked) };
-    });
+    // retrieve -> rerank -> assemble context -> LLM (architecture.md
+    // §4.7). IdentityReranker (the current default) returns candidates
+    // unchanged; the pipeline shape is what makes a real reranker later a
+    // config change in getReranker(), not an edit here. Also no tx — same
+    // reasoning as embedQuery above, since a real reranker is realistically
+    // a network call too.
+    const reranked = await getReranker().rerank({ query: input.message, chunks: candidates });
+    const assembled = assembleContext(reranked);
 
     const messages = buildChatMessages(assembled.contextText, input.message, history);
     // Used both as resolveChatTokenUsage's fallback input (if the stream

@@ -8,11 +8,12 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { prisma, withTenantTransaction } from "@raas/db";
+import { IdentityReranker } from "@raas/core";
+import { PrismaClient, prisma, withTenantTransaction } from "@raas/db";
 import { FakeEmbeddingProvider } from "@raas/providers";
 import { PLATFORM_EMBEDDING_DIM } from "@raas/shared";
 import type { FastifyInstance } from "fastify";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { buildApp } from "../app.js";
 import { redis } from "../lib/redis.js";
@@ -169,6 +170,79 @@ describe("chat route", () => {
     const citations = (citationEvents[0]!.data as { citations: Array<Record<string, unknown>> }).citations;
     expect(citations).toEqual([{ chunkId, documentId, pageNumber: 3, quote: expect.any(String) }]);
     expect((citations[0]!.quote as string).length).toBeGreaterThan(0);
+  });
+
+  it("never holds a Postgres transaction open while the embedding provider or reranker call is in flight (regression test for the transaction-boundary fix)", async () => {
+    // Admin connection (raas, the superuser DATABASE_URL role — same
+    // narrowly-scoped-admin-connection pattern
+    // packages/core/scripts/benchmark-vector-search.ts already uses for
+    // out-of-band inspection) used only to read pg_stat_activity, never
+    // to touch application data. raas_app (what every real request in
+    // this app connects as) can't reliably see other sessions' full
+    // state, so this can't be done through the app's own restricted
+    // connection.
+    const admin = new PrismaClient({ datasourceUrl: process.env.DATABASE_URL });
+
+    async function hasIdleInTransactionSession(): Promise<boolean> {
+      const rows = await admin.$queryRaw<Array<{ count: number }>>`
+        SELECT count(*)::int AS count FROM pg_stat_activity
+        WHERE usename = 'raas_app' AND state = 'idle in transaction'
+      `;
+      return rows[0]!.count > 0;
+    }
+
+    let embedSawOpenTransaction = false;
+    let rerankSawOpenTransaction = false;
+
+    // Spies on the real test doubles this suite already uses for the
+    // embedding provider and reranker (FakeEmbeddingProvider/
+    // IdentityReranker — never Postgres or Redis themselves, see this
+    // file's header comment) rather than a global FAKE_EMBEDDING_DELAY_MS,
+    // which would slow down every other test in this file. Each spy
+    // pauses briefly and checks pg_stat_activity before calling through
+    // to the real implementation — a fake provider with genuinely zero
+    // latency would otherwise make the "was a transaction open at this
+    // instant" window too small to reliably observe.
+    const originalEmbed = FakeEmbeddingProvider.prototype.embed;
+    const embedSpy = vi.spyOn(FakeEmbeddingProvider.prototype, "embed").mockImplementation(async function (this: FakeEmbeddingProvider, texts: string[]) {
+      await new Promise((resolve) => setTimeout(resolve, 75));
+      embedSawOpenTransaction = await hasIdleInTransactionSession();
+      return originalEmbed.call(this, texts);
+    });
+
+    const originalRerank = IdentityReranker.prototype.rerank;
+    const rerankSpy = vi.spyOn(IdentityReranker.prototype, "rerank").mockImplementation(async function (this: IdentityReranker, params) {
+      await new Promise((resolve) => setTimeout(resolve, 75));
+      rerankSawOpenTransaction = await hasIdleInTransactionSession();
+      return originalRerank.call(this, params);
+    });
+
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: `/kb/${knowledgeBaseId}/chat`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+        payload: { organizationId, message: `transaction boundary probe ${randomUUID()}` },
+      });
+
+      // The fix must not change observable behavior — still a normal,
+      // complete, successful response.
+      expect(response.statusCode).toBe(200);
+      expect(embedSpy).toHaveBeenCalledOnce();
+      expect(rerankSpy).toHaveBeenCalledOnce();
+
+      // The actual regression test: neither call ever saw a raas_app
+      // session sitting idle-in-transaction. Before this fix, the
+      // embedding call in particular ran INSIDE the same transaction as
+      // the KB/conversation/history lookup — this would have reliably
+      // observed one here.
+      expect(embedSawOpenTransaction).toBe(false);
+      expect(rerankSawOpenTransaction).toBe(false);
+    } finally {
+      embedSpy.mockRestore();
+      rerankSpy.mockRestore();
+      await admin.$disconnect();
+    }
   });
 
   it("requires authentication", async () => {
