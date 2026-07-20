@@ -86,3 +86,83 @@ export async function checkAndConsumeDailyBudget(params: {
   }
   return result;
 }
+
+export interface ReserveDailyBudgetResult {
+  allowed: boolean;
+  reserved: number;
+  limit: number;
+  remaining: number;
+  retryAfterSeconds: number;
+}
+
+/**
+ * Reserve half of the reserve/settle pair (see settleDailyBudget for the
+ * other half) — built for a cost that's estimated up front and then
+ * corrected once the real amount is known after the fact (apps/api's
+ * chat token budget: an LLM completion's real cost isn't known until
+ * generation finishes, but letting every concurrent request past a
+ * stale check in the meantime is exactly the race checkAndConsumeDailyBudget
+ * above doesn't have for a cost that's already exact at call time, like a
+ * document or an embedding batch — see that function's own comment).
+ *
+ * Deliberately NOT built on checkAndConsumeDailyBudget/checkLimit: that
+ * primitive always increments the counter, even on the call that gets
+ * rejected — harmless for a one-shot consumption (the next call for that
+ * dimension is correctly rejected regardless of the exact stored value),
+ * but wrong here, where a reservation happens on every single chat
+ * request. A client retrying near the limit would otherwise inflate the
+ * counter on every rejected attempt with nothing to ever undo it.
+ * @raas/rate-limit's reserve is a single atomic EVAL that leaves the
+ * counter completely untouched when the reservation doesn't fit.
+ *
+ * Throws ApiError.rateLimited (429) when the reservation itself would
+ * push the org over `limit` — same shape as checkAndConsumeDailyBudget,
+ * so callers handle it identically.
+ */
+export async function reserveDailyBudget(params: {
+  rateLimiter: RateLimiter;
+  organizationId: string;
+  dimension: string;
+  amount: number;
+  limit: number;
+  rejectionMessage: string;
+}): Promise<ReserveDailyBudgetResult> {
+  const result = await params.rateLimiter.reserve({
+    identifier: budgetIdentifier(params.organizationId, params.dimension),
+    amount: params.amount,
+    limit: params.limit,
+    window: WINDOW_SECONDS,
+  });
+  if (!result.allowed) {
+    throw ApiError.rateLimited(params.rejectionMessage);
+  }
+  return result;
+}
+
+/**
+ * Settle half of the reserve/settle pair — adjusts a dimension's daily
+ * counter by (actual - reserved) once the real cost of a previously
+ * reserved request is known: positive tops up a reservation actual usage
+ * exceeded, negative refunds the unused portion, zero (the reservation
+ * happened to be exact) is a no-op. Every reserveDailyBudget call must be
+ * settled exactly once, on every exit path (success, a mid-generation
+ * failure, a timeout) — an un-settled reservation permanently overstates
+ * the org's usage for the rest of that day's window; settling twice for
+ * the same request double-counts the adjustment in the other direction.
+ * Never throws — by the time this runs the real cost is already
+ * incurred (or the reservation's cost is being given back), and a
+ * transient Redis failure here shouldn't fail a request whose response
+ * the caller has often already sent.
+ */
+export async function settleDailyBudget(params: {
+  rateLimiter: RateLimiter;
+  organizationId: string;
+  dimension: string;
+  delta: number;
+}): Promise<void> {
+  await params.rateLimiter.settle({
+    identifier: budgetIdentifier(params.organizationId, params.dimension),
+    delta: params.delta,
+    window: WINDOW_SECONDS,
+  });
+}
