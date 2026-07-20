@@ -12,21 +12,12 @@ import { getLLMModelName, getLLMProvider } from "../lib/llm-provider.js";
 import { requireMembership } from "../lib/membership.js";
 import { checkChatRateLimit, checkChatTokenBudget, recordChatTokenUsage } from "../lib/rate-limit.js";
 import { getReranker } from "../lib/reranker.js";
+import { resolveChatTokenUsage } from "../lib/token-accounting.js";
 import { requireAuth } from "../plugins/auth-guard.js";
 
 // architecture.md §4.6: top-k candidates before context assembly truncates
 // to a token budget.
 const TOP_K = 8;
-// Same chars-per-token approximation used across this codebase (see
-// apps/worker's embed-chunks.ts and packages/core's assembleContext) —
-// neither LLMProvider's interface nor the real OpenAI streaming response
-// currently exposes real token usage without a larger interface change,
-// so this is an estimate, not billing-grade accounting.
-const CHARS_PER_TOKEN = 4;
-
-function approxTokens(text: string): number {
-  return Math.ceil(text.length / CHARS_PER_TOKEN);
-}
 
 function sendEvent(reply: FastifyReply, event: string, data: unknown): void {
   reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -91,7 +82,10 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
     });
 
     const messages = buildChatMessages(assembled.contextText, input.message, history);
-    const promptTokens = approxTokens(messages.map((m) => m.content).join("\n"));
+    // Only used as resolveChatTokenUsage's fallback input if the stream
+    // ends up not reporting real usage — never sent anywhere or recorded
+    // directly.
+    const promptText = messages.map((m) => m.content).join("\n");
 
     // From here on the response is committed to SSE — reply.hijack() tells
     // Fastify not to touch the response itself, since we're writing to the
@@ -110,7 +104,8 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
     const filter = new CitationMarkerFilter();
     let cleanText = "";
     try {
-      for await (const delta of getLLMProvider().streamCompletion(messages)) {
+      const stream = getLLMProvider().streamCompletion(messages);
+      for await (const delta of stream) {
         const safe = filter.push(delta);
         if (safe) {
           cleanText += safe;
@@ -134,7 +129,20 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
       const citations = validateCitations(filter.fullText, assembled.chunks);
       sendEvent(reply, "citations", { citations });
 
-      const completionTokens = approxTokens(cleanText);
+      // Resolves only after the stream above is fully consumed — real,
+      // billed counts from OpenAI's stream_options.include_usage chunk
+      // when the provider reported one, a chars/4 estimate otherwise (see
+      // resolveChatTokenUsage's own doc comment for why a fallback is
+      // still needed).
+      const usage = await stream.usage;
+      const accounting = resolveChatTokenUsage(usage, promptText, cleanText);
+      if (accounting.source === "estimated") {
+        request.log.warn(
+          { conversationId: conversation.id },
+          "chat completion stream did not report token usage — falling back to a character-based estimate for billing/budget accounting",
+        );
+      }
+      const { promptTokens, completionTokens, totalTokens, source: tokenSource } = accounting;
       const model = getLLMModelName();
 
       // Step 6: persist user message, assistant message, citations, and
@@ -155,7 +163,7 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
               role: "ASSISTANT",
               content: cleanText,
               citations: citations as unknown as Prisma.InputJsonValue,
-              usageMetadata: { model, promptTokens, completionTokens },
+              usageMetadata: { model, promptTokens, completionTokens, totalTokens, tokenSource },
             },
           });
           await recordUsage(
@@ -163,7 +171,12 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
             tx,
           );
           await recordUsage(
-            { organizationId: input.organizationId, userId, type: "CHAT_PROMPT_TOKENS", metadata: { model, conversationId: conversation.id, tokenCount: promptTokens } },
+            {
+              organizationId: input.organizationId,
+              userId,
+              type: "CHAT_PROMPT_TOKENS",
+              metadata: { model, conversationId: conversation.id, tokenCount: promptTokens, tokenSource },
+            },
             tx,
           );
           await recordUsage(
@@ -171,7 +184,7 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
               organizationId: input.organizationId,
               userId,
               type: "CHAT_COMPLETION_TOKENS",
-              metadata: { model, conversationId: conversation.id, tokenCount: completionTokens },
+              metadata: { model, conversationId: conversation.id, tokenCount: completionTokens, tokenSource },
             },
             tx,
           );
@@ -184,8 +197,11 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
       // Best-effort: record actual token usage against the daily
       // rate-limit budget after the fact (see recordChatTokenUsage's doc
       // comment — this can't happen before generation, since nobody knows
-      // the token count yet).
-      await recordChatTokenUsage(input.organizationId, promptTokens + completionTokens).catch((err: unknown) => {
+      // the token count yet). totalTokens comes straight from OpenAI's own
+      // usage chunk when available (source: "provider") rather than being
+      // recomputed as promptTokens + completionTokens — trusting the
+      // provider's own total over reconstructing it.
+      await recordChatTokenUsage(input.organizationId, totalTokens).catch((err: unknown) => {
         request.log.error({ err }, "failed to record chat token usage against the daily rate-limit budget");
       });
     } catch (err) {
