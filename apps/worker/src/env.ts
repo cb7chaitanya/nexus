@@ -151,4 +151,8 @@ export const env = {
   ALERT_WEBHOOK_URL: process.env.ALERT_WEBHOOK_URL,
   ALERT_WEBHOOK_TIMEOUT_MS: Number(process.env.ALERT_WEBHOOK_TIMEOUT_MS ?? 5000),
   NODE_ENV: process.env.NODE_ENV ?? "development",
+  // Optional (see lib/sentry.ts's initSentry) — same reasoning as
+  // apps/api's own copy of this var: unset leaves captureException calls
+  // going to NoopErrorTracker, never load-bearing for startup.
+  SENTRY_DSN: process.env.SENTRY_DSN,
 };

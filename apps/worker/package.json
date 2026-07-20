@@ -23,6 +23,7 @@
     "@raas/rate-limit": "workspace:*",
     "@raas/shared": "workspace:*",
     "@raas/usage": "workspace:*",
+    "@sentry/node": "^10.67.0",
     "bullmq": "^5.80.5",
     "ioredis": "^5.4.1",
     "pdf-parse": "^2.4.5"

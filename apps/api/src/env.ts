@@ -113,4 +113,10 @@ export const env = {
   // stop_grace_period is actually configured in production.
   API_SHUTDOWN_TIMEOUT_MS: requirePositiveInt("API_SHUTDOWN_TIMEOUT_MS", process.env.API_SHUTDOWN_TIMEOUT_MS, 25_000),
   NODE_ENV: process.env.NODE_ENV ?? "development",
+  // Optional (see lib/sentry.ts's initSentry) — unset leaves
+  // @raas/observability's captureException calls going to
+  // NoopErrorTracker, exactly as before Sentry was wired up. Never
+  // required: error tracking is an operational nice-to-have, not
+  // load-bearing for this process to start and serve traffic.
+  SENTRY_DSN: process.env.SENTRY_DSN,
 };

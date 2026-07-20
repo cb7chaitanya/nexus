@@ -7,6 +7,7 @@ import {
   ingestionJobsFailedTotal,
   ingestionJobsStartedTotal,
 } from "@raas/metrics";
+import { captureException } from "@raas/observability";
 import { Queue, Worker, type Job } from "bullmq";
 
 import { env } from "./env.js";
@@ -17,6 +18,7 @@ import { withJobTimeout } from "./lib/job-timeout.js";
 import { createJobLogger } from "./lib/job-logger.js";
 import { createNotifier } from "./lib/notifications/index.js";
 import { redisConnection } from "./lib/redis.js";
+import { initSentry } from "./lib/sentry.js";
 import { gracefulShutdown } from "./lib/shutdown.js";
 import { chunkTextProcessor } from "./processors/chunk-text.js";
 import { cleanupKnowledgeBaseProcessor } from "./processors/cleanup-knowledge-base.js";
@@ -60,6 +62,11 @@ async function pingRedisOrFail(): Promise<string> {
 }
 
 async function main(): Promise<void> {
+  // Before anything else can fail — see lib/sentry.ts's own doc comment
+  // (apps/api/src/lib/sentry.ts's copy has the fuller reasoning this
+  // mirrors).
+  initSentry();
+
   const pong = await pingRedisOrFail();
   logger.info({ redisUrl: env.REDIS_URL, pong, embeddingProvider: env.EMBEDDING_PROVIDER }, "worker connected to redis");
 
@@ -209,15 +216,17 @@ async function main(): Promise<void> {
   // still draining (a human resending it, or both signals arriving close
   // together) must not kick off a second concurrent shutdown — gracefulShutdown
   // closes the health server/queues/Redis connection, and doing that twice
-  // concurrently has no defined behavior worth relying on.
+  // concurrently has no defined behavior worth relying on. Also shared
+  // with the crash handlers below — see apps/api/src/index.ts's identical
+  // guard for the reasoning on the double-fault case.
   let shuttingDown: Promise<void> | null = null;
-  const shutdown = (signal: string): void => {
+  const shutdown = (reason: string, exitCode = 0): void => {
     if (shuttingDown) {
-      logger.info({ signal }, "shutdown already in progress — ignoring duplicate signal");
+      logger.info({ reason }, "shutdown already in progress — ignoring duplicate trigger");
       return;
     }
     shuttingDown = (async () => {
-      logger.info({ signal }, "worker shutting down");
+      logger.info({ reason }, "worker shutting down");
       const { drainedGracefully } = await gracefulShutdown({
         workers,
         queues: [documentEmbeddingQueue, documentSweepQueue],
@@ -226,13 +235,37 @@ async function main(): Promise<void> {
         timeoutMs: env.WORKER_SHUTDOWN_TIMEOUT_MS,
         log: logger,
       });
-      logger.info({ signal, drainedGracefully }, "worker shutdown complete");
-      process.exit(0);
+      logger.info({ reason, drainedGracefully }, "worker shutdown complete");
+      process.exit(exitCode);
     })();
   };
 
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+  // Node's own default behavior for an uncaught exception/unhandled
+  // rejection with no listener is to print it and exit(1) — registering a
+  // handler here takes over that responsibility entirely, so this must
+  // still end in process.exit with a non-zero code on every path,
+  // including a failure inside this handler itself (the outer try/catch),
+  // or a genuine crash would leave the process hanging instead of
+  // actually going down — see apps/api/src/index.ts's identical handler
+  // for the fuller reasoning this mirrors. Reuses the same
+  // gracefulShutdown as a clean SIGTERM (letting whatever job each worker
+  // is actively processing finish within WORKER_SHUTDOWN_TIMEOUT_MS)
+  // rather than a bare process.exit.
+  const onFatalError = (kind: "uncaughtException" | "unhandledRejection") => (err: unknown): void => {
+    try {
+      captureException(err, { source: kind });
+      logger.error({ err, source: kind }, `${kind} — shutting down`);
+      shutdown(kind, 1);
+    } catch (handlerErr) {
+      logger.error({ err: handlerErr, original: err, source: kind }, "error while handling a fatal error — forcing exit");
+      process.exit(1);
+    }
+  };
+  process.on("uncaughtException", onFatalError("uncaughtException"));
+  process.on("unhandledRejection", onFatalError("unhandledRejection"));
 
   // Full resource-configuration snapshot at startup (docs/decisions.md's
   // reliability ticket: "worker startup exposes configuration state") —
@@ -271,6 +304,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
+  captureException(err, { source: "startup" });
   logger.error({ err }, "worker failed to start");
   process.exit(1);
 });
