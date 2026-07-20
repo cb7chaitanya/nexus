@@ -96,16 +96,45 @@ describe("organization routes", () => {
     expect(response.statusCode).toBe(404);
   });
 
-  it("lets an OWNER/ADMIN update the organization's name and plan via PATCH", async () => {
+  it("lets an OWNER/ADMIN update the organization's name via PATCH", async () => {
     const response = await app.inject({
       method: "PATCH",
       url: `/organizations/${organizationId}`,
       cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
-      payload: { name: "Renamed Org", plan: "pro" },
+      payload: { name: "Renamed Org" },
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ name: "Renamed Org", plan: "pro" });
+    expect(response.json()).toMatchObject({ name: "Renamed Org" });
+  });
+
+  it("does not let an OWNER (or any role) upgrade the organization's plan via PATCH — plan is billing-reconciliation-owned", async () => {
+    const before = await app.inject({
+      method: "GET",
+      url: `/organizations/${organizationId}`,
+      cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+    });
+    expect(before.json()).toMatchObject({ plan: "free" });
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/organizations/${organizationId}`,
+      cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      // plan is not part of updateOrganizationSchema — this asserts the
+      // whole request body's plan field has zero effect, not just that a
+      // narrower schema exists in isolation.
+      payload: { name: "Still Free Plan Org", plan: "enterprise" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ name: "Still Free Plan Org", plan: "free" });
+
+    const after = await app.inject({
+      method: "GET",
+      url: `/organizations/${organizationId}`,
+      cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+    });
+    expect(after.json()).toMatchObject({ plan: "free" });
   });
 
   it("rejects PATCH /organizations/:id from a non-member — cannot access another org's data", async () => {

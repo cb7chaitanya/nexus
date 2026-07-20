@@ -35,13 +35,16 @@ export type ChangeMemberRoleInput = z.infer<typeof changeMemberRoleSchema>;
 export const listMembersQuerySchema = cursorPaginationSchema;
 export type ListMembersQuery = z.infer<typeof listMembersQuerySchema>;
 
-// PATCH /organizations/:id — plan is a free-text-ish enum here (no
-// billing integration exists yet to validate against), matching
-// Organization.plan's own "free | pro | enterprise" comment in
-// schema.prisma.
+// PATCH /organizations/:id — name only. `plan` is deliberately NOT
+// user-editable here: it's billing-reconciliation-owned (see
+// Organization.plan's comment in schema.prisma) and must only ever change
+// in response to an actual payment event, never a member's own PATCH,
+// regardless of role. A `plan` field in the request body is silently
+// dropped by zod's default unknown-key stripping, same as any other
+// unrecognized field — not rejected with an error, just ignored, so this
+// route has no plan-shaped input to act on at all.
 export const updateOrganizationSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
-  plan: z.enum(["free", "pro", "enterprise"]).optional(),
 });
 export type UpdateOrganizationInput = z.infer<typeof updateOrganizationSchema>;
 

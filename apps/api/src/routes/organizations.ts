@@ -146,11 +146,13 @@ export async function organizationRoutes(app: FastifyInstance): Promise<void> {
       const { id } = request.params as { id: string };
       const input = parseOrThrow(updateOrganizationSchema, request.body);
 
+      // plan is deliberately absent here — see updateOrganizationSchema's
+      // doc comment. This route has no code path that can set it, by any
+      // role, regardless of what the request body contains.
       const organization = await prisma.organization.update({
         where: { id },
         data: {
           ...(input.name !== undefined ? { name: input.name } : {}),
-          ...(input.plan !== undefined ? { plan: input.plan } : {}),
         },
       });
 

@@ -51,7 +51,15 @@ model Organization {
   id        String   @id @default(uuid())
   name      String
   slug      String   @unique
-  plan      String   @default("free") // free | pro | enterprise
+  // free | pro | enterprise — billing-reconciliation-owned: written only by
+  // the (not-yet-built) payment-webhook/billing-sync path, never by a
+  // member-facing route. apps/api/src/routes/organizations.ts's PATCH
+  // /organizations/:id — the only mutation route touching this model —
+  // deliberately has no code path that can set this field, for any role;
+  // see packages/shared/src/schemas/organizations.ts's updateOrganizationSchema.
+  // Until that billing-sync path exists, this column only ever changes via
+  // a direct DB write (a manual/support action), never through the API.
+  plan      String   @default("free")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
