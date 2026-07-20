@@ -4,7 +4,7 @@ export type { OpenAIEmbeddingProviderOptions } from "./embeddings/openai.js";
 export { FakeEmbeddingProvider } from "./embeddings/fake.js";
 export type { FakeEmbeddingProviderOptions } from "./embeddings/fake.js";
 
-export type { LLMMessage, LLMProvider } from "./llm/types.js";
+export type { CompletionStream, LLMMessage, LLMProvider, TokenUsage } from "./llm/types.js";
 export { OpenAIChatProvider, OpenAIChatError } from "./llm/openai.js";
 export type { OpenAIChatProviderOptions } from "./llm/openai.js";
 export { FakeLLMProvider } from "./llm/fake.js";

@@ -207,4 +207,85 @@ describe("OpenAIChatProvider", () => {
       expect(deltas).toEqual(["capped"]);
     });
   });
+
+  describe("usage accounting", () => {
+    it("sends stream_options.include_usage: true on every request", async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(sseResponse(["data: [DONE]\n\n"]));
+      const provider = new OpenAIChatProvider({ apiKey: "sk-test", model: "gpt-4o-mini", fetchImpl });
+
+      await collect(provider.streamCompletion([{ role: "user", content: "hi" }]));
+
+      expect(requestBody(fetchImpl).stream_options).toEqual({ include_usage: true });
+    });
+
+    it("captures real prompt/completion/total token counts from the usage-only final chunk, for normal English input", async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(
+        sseResponse([
+          'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n',
+          'data: {"choices":[{"delta":{"content":" world"}}]}\n\n',
+          'data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":4,"total_tokens":16}}\n\n',
+          "data: [DONE]\n\n",
+        ]),
+      );
+
+      const provider = new OpenAIChatProvider({ apiKey: "sk-test", model: "gpt-4o-mini", fetchImpl });
+      const stream = provider.streamCompletion([{ role: "user", content: "hi" }]);
+      const deltas = await collect(stream);
+      const usage = await stream.usage;
+
+      expect(deltas).toEqual(["Hello", " world"]);
+      expect(usage).toEqual({ promptTokens: 12, completionTokens: 4, totalTokens: 16 });
+    });
+
+    it("captures real usage for unicode-heavy content without it affecting delta parsing", async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(
+        sseResponse([
+          `data: ${JSON.stringify({ choices: [{ delta: { content: "退款将在三十天内处理完毕" } }] })}\n\n`,
+          'data: {"choices":[],"usage":{"prompt_tokens":58,"completion_tokens":34,"total_tokens":92}}\n\n',
+          "data: [DONE]\n\n",
+        ]),
+      );
+
+      const provider = new OpenAIChatProvider({ apiKey: "sk-test", model: "gpt-4o-mini", fetchImpl });
+      const stream = provider.streamCompletion([{ role: "user", content: "这是一个关于退款政策的问题" }]);
+      const deltas = await collect(stream);
+      const usage = await stream.usage;
+
+      expect(deltas).toEqual(["退款将在三十天内处理完毕"]);
+      // The real, provider-reported count — never derived from
+      // deltas.join("").length / 4, which would badly undercount CJK text.
+      expect(usage).toEqual({ promptTokens: 58, completionTokens: 34, totalTokens: 92 });
+    });
+
+    it("resolves usage to null when the response never sends a usage chunk (missing usage metadata fallback)", async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(
+        sseResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}\n\n', "data: [DONE]\n\n"]),
+      );
+
+      const provider = new OpenAIChatProvider({ apiKey: "sk-test", model: "gpt-4o-mini", fetchImpl });
+      const stream = provider.streamCompletion([{ role: "user", content: "hi" }]);
+      const deltas = await collect(stream);
+      const usage = await stream.usage;
+
+      expect(deltas).toEqual(["ok"]);
+      expect(usage).toBeNull();
+    });
+
+    it("still resolves usage (to whatever was captured before the failure) when the stream throws mid-read", async () => {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'));
+          controller.error(new Error("connection dropped"));
+        },
+      });
+      const fetchImpl = vi.fn().mockResolvedValue(new Response(stream, { status: 200 }));
+
+      const provider = new OpenAIChatProvider({ apiKey: "sk-test", model: "gpt-4o-mini", fetchImpl });
+      const completionStream = provider.streamCompletion([{ role: "user", content: "hi" }]);
+
+      await expect(collect(completionStream)).rejects.toThrow("connection dropped");
+      await expect(completionStream.usage).resolves.toBeNull();
+    });
+  });
 });

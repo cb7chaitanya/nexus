@@ -1,6 +1,6 @@
 import { CircuitBreaker } from "../resilience/circuit-breaker.js";
 import { withTimeout } from "../resilience/timeout.js";
-import type { LLMMessage, LLMProvider } from "./types.js";
+import type { CompletionStream, LLMMessage, LLMProvider, TokenUsage } from "./types.js";
 
 export interface OpenAIChatProviderOptions {
   apiKey: string;
@@ -34,6 +34,17 @@ export interface OpenAIChatProviderOptions {
 
 interface OpenAIStreamChunk {
   choices: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
+  // Present only on the final chunk of a stream started with
+  // stream_options.include_usage: true — real, billed token counts for
+  // the whole request. That final chunk's `choices` is typically an empty
+  // array (no delta.content, so choices[0] is undefined below and nothing
+  // is yielded for it) — this is a genuinely separate, usage-only chunk,
+  // not an extra field bolted onto the last content chunk.
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  } | null;
 }
 
 export class OpenAIChatError extends Error {
@@ -86,6 +97,19 @@ function maxTokensParamName(model: string): "max_tokens" | "max_completion_token
  * (@raas/usage) can only catch *after* the cost is already incurred — this
  * is the per-request backstop that budget can't be.
  *
+ * Every request also sends `stream_options: { include_usage: true }`,
+ * which makes OpenAI emit one extra, usage-only chunk right before
+ * `data: [DONE]` carrying the real prompt/completion/total token counts
+ * for the whole request — the same counts OpenAI actually bills against.
+ * streamCompletion's returned CompletionStream exposes this via its
+ * `usage` promise, resolved once the stream finishes. This replaces the
+ * chars/4 estimate apps/api's chat route used to compute and record
+ * against the daily token budget — that estimate is script-dependent
+ * (dense-tokenizing content like CJK text undercounts badly relative to
+ * real billing) and was purely a stand-in until real usage was wired
+ * through; see apps/api/src/lib/token-accounting.ts for the fallback path
+ * still used on the rare response that omits this chunk.
+ *
  * Resilience is split by phase, which is the actual distinction that
  * makes retrying safe or not: establishing the response — the fetch
  * call, up through checking response.ok — gets a timeout, exponential
@@ -126,31 +150,73 @@ export class OpenAIChatProvider implements LLMProvider {
     this.circuitBreaker = options.circuitBreaker ?? new CircuitBreaker({ failureThreshold: 5, cooldownMs: 30_000 });
   }
 
-  async *streamCompletion(messages: LLMMessage[]): AsyncIterable<string> {
-    const response = await this.circuitBreaker.execute(() => this.connectWithRetry(messages));
+  streamCompletion(messages: LLMMessage[]): CompletionStream {
+    // Deferred promise, not computed inline: `usage` must be readable by
+    // the caller (apps/api's chat route) only after it has fully consumed
+    // the `for await` loop below — resolveUsage is called from generate()'s
+    // `finally`, which runs on normal completion, an early `break`
+    // (for-await calls the generator's `.return()`), and a thrown error
+    // alike, so `usage` always settles exactly once, no matter how
+    // iteration ends.
+    let resolveUsage!: (usage: TokenUsage | null) => void;
+    const usage = new Promise<TokenUsage | null>((resolve) => {
+      resolveUsage = resolve;
+    });
 
-    const reader = response.body!.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
+    const iterator = this.generate(messages, resolveUsage);
+
+    return {
+      [Symbol.asyncIterator]: () => iterator,
+      usage,
+    };
+  }
+
+  private async *generate(messages: LLMMessage[], resolveUsage: (usage: TokenUsage | null) => void): AsyncGenerator<string> {
+    let capturedUsage: TokenUsage | null = null;
 
     try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
+      const response = await this.circuitBreaker.execute(() => this.connectWithRetry(messages));
 
-        const lines = buffer.split("\n");
-        // The last element may be a partial line — keep it in the buffer
-        // until more bytes arrive.
-        buffer = lines.pop() ?? "";
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
 
-        for (const line of lines) {
-          const delta = parseSseDataLine(line);
-          if (delta !== null) yield delta;
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const lines = buffer.split("\n");
+          // The last element may be a partial line — keep it in the buffer
+          // until more bytes arrive.
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            const chunk = parseSseChunk(line);
+            if (chunk === null) continue;
+
+            if (chunk.usage) {
+              capturedUsage = {
+                promptTokens: chunk.usage.prompt_tokens,
+                completionTokens: chunk.usage.completion_tokens,
+                totalTokens: chunk.usage.total_tokens,
+              };
+            }
+
+            const delta = chunk.choices[0]?.delta?.content;
+            if (delta) yield delta;
+          }
         }
+      } finally {
+        reader.releaseLock();
       }
     } finally {
-      reader.releaseLock();
+      // Whatever was captured (or null, if the response never sent a
+      // usage chunk — see token-accounting.ts's fallback) — the caller's
+      // `usage` promise must settle regardless of how this generator
+      // exits.
+      resolveUsage(capturedUsage);
     }
   }
 
@@ -175,6 +241,7 @@ export class OpenAIChatProvider implements LLMProvider {
                 model: this.model,
                 messages,
                 stream: true,
+                stream_options: { include_usage: true },
                 [maxTokensParamName(this.model)]: this.maxCompletionTokens,
               }),
               signal,
@@ -223,13 +290,12 @@ export class OpenAIChatProvider implements LLMProvider {
   }
 }
 
-function parseSseDataLine(line: string): string | null {
+function parseSseChunk(line: string): OpenAIStreamChunk | null {
   const trimmed = line.trim();
   if (!trimmed.startsWith("data:")) return null;
 
   const payload = trimmed.slice("data:".length).trim();
   if (payload === "[DONE]") return null;
 
-  const parsed = JSON.parse(payload) as OpenAIStreamChunk;
-  return parsed.choices[0]?.delta?.content ?? null;
+  return JSON.parse(payload) as OpenAIStreamChunk;
 }

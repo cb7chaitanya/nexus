@@ -53,4 +53,40 @@ describe("FakeLLMProvider", () => {
 
     expect(elapsed).toBeGreaterThanOrEqual(20);
   });
+
+  describe("usage", () => {
+    it("defaults to a deterministic chars/4-derived estimate of the actual prompt and response text", async () => {
+      const provider = new FakeLLMProvider();
+      const messages = [{ role: "user" as const, content: "[[chunk:c1]] hello" }];
+
+      const stream = provider.streamCompletion(messages);
+      const text = await collect(stream);
+      const usage = await stream.usage;
+
+      expect(usage).not.toBeNull();
+      expect(usage!.promptTokens).toBe(Math.ceil(messages[0]!.content.length / 4));
+      expect(usage!.completionTokens).toBe(Math.ceil(text.length / 4));
+      expect(usage!.totalTokens).toBe(usage!.promptTokens + usage!.completionTokens);
+    });
+
+    it("resolves usage to exactly the configured value when one is passed explicitly", async () => {
+      const explicitUsage = { promptTokens: 999, completionTokens: 111, totalTokens: 1110 };
+      const provider = new FakeLLMProvider({ usage: explicitUsage });
+
+      const stream = provider.streamCompletion([{ role: "user" as const, content: "[[chunk:c1]] hi" }]);
+      await collect(stream);
+
+      await expect(stream.usage).resolves.toEqual(explicitUsage);
+    });
+
+    it("resolves usage to null when configured to simulate a missing-usage-metadata response", async () => {
+      const provider = new FakeLLMProvider({ usage: null });
+
+      const stream = provider.streamCompletion([{ role: "user" as const, content: "[[chunk:c1]] hi" }]);
+      const text = await collect(stream);
+
+      expect(text.length).toBeGreaterThan(0);
+      await expect(stream.usage).resolves.toBeNull();
+    });
+  });
 });
