@@ -1,0 +1,22 @@
+-- Drops the single-column "DocumentChunk_organizationId_idx", now fully
+-- redundant: the composite index added in the previous migration
+-- (organizationId, knowledgeBaseId) already serves every query that
+-- index served, including an organizationId-only filter (leftmost-
+-- prefix rule) — most notably the implicit filter Postgres RLS's
+-- tenant_isolation policy adds to every query against this table.
+-- Keeping both would only cost extra write amplification (every insert/
+-- update maintains two overlapping indexes) with no read benefit.
+--
+-- CONCURRENTLY here too, not a plain DROP INDEX: a normal DROP INDEX
+-- still takes a brief ACCESS EXCLUSIVE lock that blocks reads and
+-- writes against DocumentChunk for its duration — avoidable, and this
+-- table is both written (ingestion) and read (every chat request) too
+-- frequently in production to accept that, however brief.
+--
+-- Its own migration file, applied strictly after the composite index's
+-- CREATE INDEX CONCURRENTLY (see that migration's comment) — combining
+-- the two statements in one file would make `prisma migrate deploy`
+-- wrap them in an implicit transaction, which CONCURRENTLY commands
+-- cannot run inside (verified empirically, not assumed — see the
+-- previous migration).
+DROP INDEX CONCURRENTLY "DocumentChunk_organizationId_idx";

@@ -1,0 +1,48 @@
+-- Fixes a real retrieval-scaling bug, verified empirically (EXPLAIN
+-- ANALYZE against seeded data, not assumed): searchSimilarChunks
+-- (packages/core/src/retrieval/similarity-search.ts) filters
+-- "organizationId" = $1 AND "knowledgeBaseId" = $2, but DocumentChunk
+-- only had a single-column index on "organizationId" — so every chat
+-- query used that index to fetch the ENTIRE org's chunk rows across
+-- every KB it owns, then filtered out everything not matching
+-- knowledgeBaseId in a Filter step, before sorting for the LIMIT. Cost
+-- scales with the org's total chunk count across all KBs, not with the
+-- target KB's size — an org with many KBs pays for its whole embedded
+-- corpus on every single chat message. See docs/decisions.md's
+-- "DocumentChunk composite index" note for the full measurement this
+-- migration is based on.
+--
+-- CONCURRENTLY, not a plain CREATE INDEX: this table is written by
+-- apps/worker on every ingestion job and read by apps/api on every chat
+-- request, so a production rollout cannot take the ACCESS EXCLUSIVE
+-- lock a normal CREATE INDEX briefly holds while it scans the table.
+-- Deliberately the ONLY statement in this migration file — verified
+-- empirically against this exact Prisma version (5.22.0) that a
+-- migration.sql with more than one statement gets wrapped in an
+-- implicit transaction by `prisma migrate deploy`, and Postgres refuses
+-- to run CREATE INDEX CONCURRENTLY inside any transaction block
+-- ("cannot run inside a transaction block") — a single-statement file
+-- is what avoids that wrapping. The matching DROP INDEX CONCURRENTLY
+-- for the now-redundant single-column index this replaces is therefore
+-- its own, separate migration file (see the next one) rather than
+-- combined here.
+--
+-- Applied BEFORE dropping the old "DocumentChunk_organizationId_idx"
+-- index (not combined into one migration, not reordered) so there is
+-- never a window where organizationId-scoped queries — including every
+-- query Postgres RLS itself adds via the tenant_isolation policy — have
+-- no supporting index at all: this composite index's leading column is
+-- organizationId, so it already serves those queries too (the leftmost-
+-- prefix rule), making the old single-column index fully redundant, not
+-- just superseded for the two-column case.
+--
+-- Name matches Prisma's own default convention for
+-- @@index([organizationId, knowledgeBaseId]) on DocumentChunk
+-- (verified via `prisma migrate diff`) so schema.prisma's declaration
+-- and this hand-written CONCURRENTLY build are recognized as the same
+-- index, not drift, on a future `prisma migrate dev` — the same
+-- necessity documented in migration 20260717122000's HNSW index, here
+-- actually resolved rather than deferred (see that migration's own
+-- comment on why CONCURRENTLY was left as a follow-up there instead of
+-- solved outright).
+CREATE INDEX CONCURRENTLY "DocumentChunk_organizationId_knowledgeBaseId_idx" ON "DocumentChunk"("organizationId", "knowledgeBaseId");

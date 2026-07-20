@@ -336,6 +336,29 @@ model Document {
 // 20260717122000_add_document_chunk_hnsw_index. Prisma cannot express
 // this natively (no `@@index` syntax for access-method/opclass), so it
 // only exists as hand-written raw SQL in that migration, not here.
+//
+// @@index([organizationId, knowledgeBaseId]) — NOT just organizationId
+// alone (which is all this used to be). searchSimilarChunks
+// (packages/core/src/retrieval/similarity-search.ts) — the query behind
+// every chat request — filters on both columns together. A
+// single-column organizationId index can only narrow the search down
+// to "this org's chunks across every KB it owns", then filters the rest
+// out row by row; cost scales with the org's TOTAL chunk count across
+// every KB, not the target KB's size, since the index has no way to
+// seek directly to the (org, KB) pair. Verified with EXPLAIN ANALYZE
+// against seeded data (see migration 20260720120000's own comment for
+// the full before/after): the single-column index made the planner
+// visit every one of an org's ~8000 chunks — spread across many other
+// KBs — to answer a query scoped to one ~30-chunk KB; the composite
+// index turns that into a direct index seek instead
+// ("Index Cond" on both columns, not a post-fetch "Filter"),
+// dropping this query's execution time roughly 10x even at that small
+// scale. The leading column is still organizationId, so this also
+// keeps serving every organizationId-only query the old index did
+// (including the implicit filter Postgres RLS's tenant_isolation
+// policy adds to every query against this table) — nothing lost,
+// which is why the old single-column index was dropped rather than
+// kept alongside this one (see migration 20260720120001).
 model DocumentChunk {
   id              String   @id @default(uuid())
   organizationId  String
@@ -355,7 +378,7 @@ model DocumentChunk {
   document      Document      @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@unique([documentId, chunkIndex])
-  @@index([organizationId])
+  @@index([organizationId, knowledgeBaseId])
 }
 
 // ───────────────────────── Usage metering ─────────────────────────
