@@ -8,6 +8,18 @@ function requireEnv(name: string): string {
   return value;
 }
 
+/** Same discipline as apps/api/src/env.ts's own requirePositiveInt — a
+ * resource-configuration value that IS set but nonsensical (zero,
+ * negative, non-numeric) is refused at startup rather than silently
+ * producing a concurrency of 0 or a timeout of NaN ms. */
+function requirePositiveInt(name: string, rawValue: string | undefined, defaultValue: number): number {
+  const value = rawValue === undefined ? defaultValue : Number(rawValue);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer, got: ${JSON.stringify(rawValue)}. Refusing to start.`);
+  }
+  return value;
+}
+
 export const env = {
   REDIS_URL: process.env.REDIS_URL ?? "redis://localhost:6379",
   S3_ENDPOINT: requireEnv("S3_ENDPOINT"),
@@ -16,6 +28,23 @@ export const env = {
   S3_ACCESS_KEY_ID: requireEnv("S3_ACCESS_KEY_ID"),
   S3_SECRET_ACCESS_KEY: requireEnv("S3_SECRET_ACCESS_KEY"),
   S3_FORCE_PATH_STYLE: process.env.S3_FORCE_PATH_STYLE !== "false",
+  // A second, worker-operational memory guardrail — deliberately separate
+  // from (and independent of) @raas/shared's MAX_UPLOAD_SIZE_BYTES (1 GiB),
+  // which stays exactly as it is: that's the platform's accepted-upload
+  // ceiling, enforced at presign/complete time. This is what extract-text
+  // checks before ever downloading an object into memory (see
+  // processors/extract-text.ts) — a lower, per-deployment tunable an
+  // operator can set based on THIS worker fleet's actual container memory,
+  // without touching what the platform accepts from customers at all. A
+  // document over this limit still uploaded successfully; it just fails
+  // processing with a clear, safe reason (DocumentValidationError) instead
+  // of ever being downloaded. Default (200 MiB) is comfortably below the
+  // platform ceiling and sized so that
+  // WORKER_EXTRACTION_CONCURRENCY * WORKER_MAX_DOCUMENT_BYTES (worst-case
+  // concurrent in-memory bytes across this worker's extraction slots — see
+  // that var's own comment) stays well under a typical small-to-medium
+  // worker container's memory budget.
+  WORKER_MAX_DOCUMENT_BYTES: requirePositiveInt("WORKER_MAX_DOCUMENT_BYTES", process.env.WORKER_MAX_DOCUMENT_BYTES, 200 * 1024 * 1024),
   // "fake" is a real, documented provider choice (see
   // @raas/providers/FakeEmbeddingProvider) for local dev without an OpenAI
   // key and for tests — deterministic, offline, no cost. Defaults to

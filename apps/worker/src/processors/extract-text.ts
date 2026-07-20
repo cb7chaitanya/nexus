@@ -36,6 +36,28 @@ export async function extractTextProcessor(job: Job<DocumentJobData>): Promise<E
       throw new DocumentValidationError(`Unsupported file type "${document.mimeType}" — only application/pdf is supported`);
     }
 
+    // Worker-operational memory guardrail (see env.ts's
+    // WORKER_MAX_DOCUMENT_BYTES doc comment) — checked before downloadObject
+    // is ever called, so an oversized document never gets buffered into
+    // memory at all. Independent of, and always <=, @raas/shared's
+    // MAX_UPLOAD_SIZE_BYTES (the platform's accepted-upload ceiling,
+    // enforced at presign/complete time) — this can be tuned per worker
+    // deployment without touching what the platform accepts from
+    // customers. Real streaming PDF parsing was evaluated and rejected for
+    // now: pdfjs-dist (the library extractPdfText's pdf-parse wraps)
+    // supports a PDFDataRangeTransport for partial/range-based loading,
+    // but wiring that against S3 GetObject range requests would mean
+    // extractPdfText taking a transport instead of a Buffer — a real
+    // change to this processor's I/O contract, not a config change. Bounded
+    // concurrency (WORKER_EXTRACTION_CONCURRENCY) x a bounded per-document
+    // size is the in-scope mitigation for now; see this var's own comment
+    // for the worst-case-memory formula that follows from it.
+    if (document.sizeBytes > env.WORKER_MAX_DOCUMENT_BYTES) {
+      throw new DocumentValidationError(
+        `Document is ${document.sizeBytes} bytes, exceeding this worker's configured processing limit of ${env.WORKER_MAX_DOCUMENT_BYTES} bytes`,
+      );
+    }
+
     // No-op outside chaos testing (see env.ts) — lets a test's kill land
     // reliably inside the download+parse window below instead of racing
     // a fast real PDF parse.
