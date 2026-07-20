@@ -45,3 +45,21 @@ export function resolveChatTokenUsage(usage: TokenUsage | null, promptText: stri
   const completionTokens = estimateTokens(completionText);
   return { promptTokens, completionTokens, totalTokens: promptTokens + completionTokens, source: "estimated" };
 }
+
+/**
+ * Worst-case reservation made BEFORE generation starts (see
+ * apps/api/src/lib/rate-limit.ts's reserveChatTokenBudget) — prompt
+ * tokens estimated the same chars/4 way resolveChatTokenUsage's fallback
+ * does, plus `maxCompletionTokens`, the hard ceiling the provider is
+ * configured to enforce on every request (see @raas/providers's
+ * OpenAIChatProvider) rather than an estimate of what the model will
+ * actually produce. Real completions can never exceed that ceiling, so
+ * this reservation is a genuine upper bound on the request's real cost
+ * for the completion side — it only needs to be reasonable for the
+ * prompt side, not exact, because settling against resolveChatTokenUsage's
+ * result afterward corrects for any remaining gap (a prompt that
+ * tokenizes more densely than chars/4 assumes, for example).
+ */
+export function estimateChatReservation(promptText: string, maxCompletionTokens: number): number {
+  return estimateTokens(promptText) + maxCompletionTokens;
+}

@@ -1,6 +1,6 @@
 import { createRateLimiter } from "@raas/rate-limit";
 import { ApiError } from "@raas/shared";
-import { checkAndConsumeDailyBudget, checkDailyBudget, getOrganizationDailyLimit, recordDailyBudgetUsage } from "@raas/usage";
+import { checkAndConsumeDailyBudget, getOrganizationDailyLimit, reserveDailyBudget, settleDailyBudget } from "@raas/usage";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { env } from "../env.js";
@@ -82,41 +82,58 @@ export async function checkChatRateLimit(check: ChatRateLimitCheck, reply: Fasti
   }
 }
 
-/**
- * Pre-flight check: is this organization already over its daily token
- * budget from prior usage? Read-only (peekLimit, not checkLimit) — the
- * actual token cost of THIS request is only known after generation
- * completes (see recordChatTokenUsage below), so it can't be charged in
- * advance. This only blocks NEW requests once a prior request has already
- * pushed the org over budget; the request that crosses the line is itself
- * unavoidably let through, since nobody knew its cost yet. An honest
- * limitation of metering something you can't measure until after the
- * fact, not a bug.
- *
- * The org's ceiling comes from its OrganizationUsageLimit row when one
- * exists, falling back to RATE_LIMIT_CHAT_TOKEN_BUDGET_DAILY otherwise —
- * this is the "chat provider" half of the cost-protection guard (see
- * @raas/usage's embedding-guard.ts for the embedding half); the check
- * itself is @raas/usage's shared checkDailyBudget primitive, the same one
- * the embedding guard uses, not a bespoke reimplementation.
- */
-export async function checkChatTokenBudget(organizationId: string, reply: FastifyReply): Promise<void> {
-  const limit = await getOrganizationDailyLimit(organizationId, "maxChatTokensPerDay", env.RATE_LIMIT_CHAT_TOKEN_BUDGET_DAILY);
-  const result = await checkDailyBudget({ rateLimiter, organizationId, dimension: "chat-tokens", limit });
-  applyHeaders(reply, result);
-  if (!result.allowed) {
-    throw ApiError.rateLimited("This organization has exceeded its daily token budget");
-  }
+export interface ChatTokenReservation {
+  /** Exactly the amount that was reserved — 0 is never returned here,
+   * since a rejected reservation throws instead (see below). Threaded
+   * back into settleChatTokenUsage once real usage is known. */
+  reserved: number;
 }
 
 /**
- * Records actual token usage against the daily budget counter, after
- * generation completes. Never throws on the budget being exceeded — the
- * tokens are already spent by the time this runs; it only affects
- * whether the NEXT request's checkChatTokenBudget call is blocked.
+ * Atomically reserves `estimatedAmount` against the organization's daily
+ * chat-token budget BEFORE generation starts, and rejects (429) if that
+ * reservation alone would push the org over budget — replaces the old
+ * peek-then-record design (a read-only peekLimit check before
+ * generation, an unconditional record after), which let any number of
+ * concurrent requests all pass the same stale peek before a single one
+ * of them had recorded real usage: an org could run arbitrarily far past
+ * its nominal daily ceiling for as long as requests kept starting faster
+ * than earlier ones finished and recorded (see @raas/usage's
+ * reserveDailyBudget for why this needed a genuinely atomic primitive,
+ * not just moving the same check earlier).
+ *
+ * The org's ceiling comes from its OrganizationUsageLimit row when one
+ * exists, falling back to RATE_LIMIT_CHAT_TOKEN_BUDGET_DAILY otherwise —
+ * unchanged from the old design. Must be settled exactly once via
+ * settleChatTokenUsage below, on every exit path — see chat.ts.
  */
-export async function recordChatTokenUsage(organizationId: string, totalTokens: number): Promise<void> {
-  await recordDailyBudgetUsage({ rateLimiter, organizationId, dimension: "chat-tokens", amount: totalTokens });
+export async function reserveChatTokenBudget(organizationId: string, estimatedAmount: number, reply: FastifyReply): Promise<ChatTokenReservation> {
+  const limit = await getOrganizationDailyLimit(organizationId, "maxChatTokensPerDay", env.RATE_LIMIT_CHAT_TOKEN_BUDGET_DAILY);
+  const result = await reserveDailyBudget({
+    rateLimiter,
+    organizationId,
+    dimension: "chat-tokens",
+    amount: estimatedAmount,
+    limit,
+    rejectionMessage: "This organization has exceeded its daily token budget",
+  });
+  applyHeaders(reply, result);
+  return { reserved: result.reserved };
+}
+
+/**
+ * Settles a prior reserveChatTokenBudget reservation against the real
+ * token count once generation has finished — successfully, or by
+ * failing partway through; either way the caller (chat.ts) always has
+ * *some* real-or-estimated total by the time this runs. Tops the
+ * reservation up if actual usage exceeded it, refunds the unused portion
+ * otherwise, and is a no-op if the reservation happened to be exact.
+ * Never throws — the request's response has typically already been sent
+ * by the time this runs, so a transient Redis failure here must not fail
+ * the request; the caller logs instead (see chat.ts).
+ */
+export async function settleChatTokenUsage(organizationId: string, reservedAmount: number, actualAmount: number): Promise<void> {
+  await settleDailyBudget({ rateLimiter, organizationId, dimension: "chat-tokens", delta: actualAmount - reservedAmount });
 }
 
 /**

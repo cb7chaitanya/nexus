@@ -1,6 +1,7 @@
 import { assembleContext, buildChatMessages, CitationMarkerFilter, embedQuery, searchSimilarChunks, validateCitations } from "@raas/core";
 import { withTenantTransaction } from "@raas/db";
 import type { Prisma } from "@raas/db";
+import type { CompletionStream } from "@raas/providers";
 import { recordUsage } from "@raas/usage";
 import { ApiError, chatSchema, parseOrThrow } from "@raas/shared";
 import type { FastifyInstance, FastifyReply } from "fastify";
@@ -10,9 +11,9 @@ import { findOrCreateConversation, loadConversationHistory } from "../lib/conver
 import { getBudgetGuardedEmbeddingProvider } from "../lib/embedding-provider.js";
 import { getLLMModelName, getLLMProvider } from "../lib/llm-provider.js";
 import { requireMembership } from "../lib/membership.js";
-import { checkChatRateLimit, checkChatTokenBudget, recordChatTokenUsage } from "../lib/rate-limit.js";
+import { checkChatRateLimit, reserveChatTokenBudget, settleChatTokenUsage } from "../lib/rate-limit.js";
 import { getReranker } from "../lib/reranker.js";
-import { resolveChatTokenUsage } from "../lib/token-accounting.js";
+import { estimateChatReservation, resolveChatTokenUsage, type ChatTokenAccounting } from "../lib/token-accounting.js";
 import { requireAuth } from "../plugins/auth-guard.js";
 
 // architecture.md §4.6: top-k candidates before context assembly truncates
@@ -34,9 +35,11 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
 
     // Rate limiting before any retrieval/generation work starts — a
     // limit-exceeded response is a normal ApiError (429) through the
-    // standard error handler, never a partial/half-open stream.
+    // standard error handler, never a partial/half-open stream. The token
+    // budget itself can't be checked here yet — an accurate reservation
+    // needs the real prompt text, which isn't assembled until after
+    // retrieval below (see reserveChatTokenBudget's call site).
     await checkChatRateLimit({ organizationId: input.organizationId, userId }, reply);
-    await checkChatTokenBudget(input.organizationId, reply);
 
     // Steps 1-3 of the ticket's chat flow: create/find conversation, load
     // history, retrieve context. Everything here can still fail with a
@@ -82,10 +85,22 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
     });
 
     const messages = buildChatMessages(assembled.contextText, input.message, history);
-    // Only used as resolveChatTokenUsage's fallback input if the stream
-    // ends up not reporting real usage — never sent anywhere or recorded
-    // directly.
+    // Used both as resolveChatTokenUsage's fallback input (if the stream
+    // ends up not reporting real usage) and, right below, to size the
+    // up-front reservation — never sent anywhere or recorded directly.
     const promptText = messages.map((m) => m.content).join("\n");
+
+    // Atomically reserves a worst-case token estimate against the org's
+    // daily budget BEFORE generation starts, rejecting (429, still a
+    // normal JSON error response — this runs before hijack) if the
+    // reservation itself doesn't fit. This is the fix for the race the
+    // old peek-then-record design had: every request now atomically
+    // claims its own worst-case share of the budget up front, so
+    // concurrent requests can no longer all pass a stale check before any
+    // of them accounts for real usage. Settled exactly once against real
+    // usage below, on every exit path — success, a mid-stream failure, or
+    // a provider timeout (see settleChatTokenUsage's call sites).
+    const reservation = await reserveChatTokenBudget(input.organizationId, estimateChatReservation(promptText, env.MAX_COMPLETION_TOKENS), reply);
 
     // From here on the response is committed to SSE — reply.hijack() tells
     // Fastify not to touch the response itself, since we're writing to the
@@ -103,8 +118,17 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
     // user should see (implementation-plan.md §2 item 5).
     const filter = new CitationMarkerFilter();
     let cleanText = "";
+    // Declared outside the try so the catch block below can still reach
+    // stream.usage (whatever was captured before things broke) and so
+    // accounting is available afterward for the settle call regardless of
+    // which branch ran — a safe all-zero default rather than `| undefined`
+    // plus a non-null assertion, since this feeds a budget settlement and
+    // "provably always assigned by construction" is a weaker guarantee to
+    // lean on there than a value that's always safe to use as-is.
+    let stream: CompletionStream | undefined;
+    let accounting: ChatTokenAccounting = { promptTokens: 0, completionTokens: 0, totalTokens: 0, source: "estimated" };
     try {
-      const stream = getLLMProvider().streamCompletion(messages);
+      stream = getLLMProvider().streamCompletion(messages);
       for await (const delta of stream) {
         const safe = filter.push(delta);
         if (safe) {
@@ -135,7 +159,7 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
       // resolveChatTokenUsage's own doc comment for why a fallback is
       // still needed).
       const usage = await stream.usage;
-      const accounting = resolveChatTokenUsage(usage, promptText, cleanText);
+      accounting = resolveChatTokenUsage(usage, promptText, cleanText);
       if (accounting.source === "estimated") {
         request.log.warn(
           { conversationId: conversation.id },
@@ -193,22 +217,36 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
         request.log.error({ err: persistErr }, "failed to persist chat message/usage after successful generation");
         sendEvent(reply, "error", { message: "Your answer was generated successfully but could not be saved to conversation history" });
       }
-
-      // Best-effort: record actual token usage against the daily
-      // rate-limit budget after the fact (see recordChatTokenUsage's doc
-      // comment — this can't happen before generation, since nobody knows
-      // the token count yet). totalTokens comes straight from OpenAI's own
-      // usage chunk when available (source: "provider") rather than being
-      // recomputed as promptTokens + completionTokens — trusting the
-      // provider's own total over reconstructing it.
-      await recordChatTokenUsage(input.organizationId, totalTokens).catch((err: unknown) => {
-        request.log.error({ err }, "failed to record chat token usage against the daily rate-limit budget");
-      });
     } catch (err) {
       request.log.error({ err }, "chat generation failed mid-stream");
       sendEvent(reply, "error", { message: "Generation failed" });
+
+      // Stream interruption, a provider failure, a connect timeout — all
+      // land here. Whatever text actually reached the client (cleanText,
+      // possibly empty if generation failed before yielding anything) and
+      // whatever the stream captured before things broke (usually null —
+      // real usage only arrives on the final chunk of a stream that
+      // finished normally) still get a best-effort accounting via the
+      // exact same real-usage-preferred, chars/4-fallback logic the
+      // success path uses, so a failed request settles for something
+      // reasonable instead of either the full reservation or nothing.
+      const usage = stream ? await stream.usage.catch(() => null) : null;
+      accounting = resolveChatTokenUsage(usage, promptText, cleanText);
     } finally {
       reply.raw.end();
     }
+
+    // Exactly one settle call per request, regardless of which branch
+    // above ran: the try's success path assigns `accounting` after the
+    // persistence attempt (whether persistence itself succeeded or not),
+    // the catch assigns it on every failure path — never both, never
+    // neither. Tops the reservation up or refunds the unused portion; see
+    // settleChatTokenUsage's own doc comment. Never awaited inside the
+    // try/catch itself: this must run even when persistence failed, and
+    // must run exactly once even though there are two very different
+    // ways to reach it.
+    await settleChatTokenUsage(input.organizationId, reservation.reserved, accounting.totalTokens).catch((err: unknown) => {
+      request.log.error({ err }, "failed to settle chat token usage against the daily rate-limit budget");
+    });
   });
 }

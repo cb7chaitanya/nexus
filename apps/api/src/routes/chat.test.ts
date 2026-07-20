@@ -339,6 +339,124 @@ describe("chat route", () => {
     expect(Number(lastResponse!.headers["retry-after"])).toBeGreaterThan(0);
   });
 
+  describe("concurrent token-budget reservation", () => {
+    // A second organization for the already-authenticated outsider user
+    // (POST /organizations, not POST /auth/signup) — deliberately not a
+    // fresh signup: signup is IP-rate-limited (authRateLimit), and this
+    // file's test suite already makes enough signup calls across its
+    // other describe blocks that a redundant one here risks tripping that
+    // unrelated limit under full-suite parallelism. outsiderCookie
+    // specifically (not ownerCookie) because the owner's own per-user
+    // chat RPM bucket (RATE_LIMIT_CHAT_USER_RPM) is already exercised by
+    // several tests above — reusing it here would risk this describe
+    // block's 20 chat calls tripping THAT limit instead of the token
+    // budget this is actually testing. outsiderCookie makes exactly one
+    // chat call anywhere else in this file, and that one fails
+    // membership before rate limiting even runs, so its RPM bucket is
+    // effectively untouched.
+    let budgetOrganizationId: string;
+    let budgetKbId: string;
+
+    beforeAll(async () => {
+      const orgResponse = await app.inject({
+        method: "POST",
+        url: "/organizations",
+        cookies: { [SESSION_COOKIE_NAME]: outsiderCookie },
+        payload: { name: `Chat Budget Org ${suffix}` },
+      });
+      expect(orgResponse.statusCode).toBe(201);
+      budgetOrganizationId = orgResponse.json().id;
+
+      const kb = await withTenantTransaction(budgetOrganizationId, (tx) =>
+        tx.knowledgeBase.create({
+          data: {
+            organizationId: budgetOrganizationId,
+            name: "Budget KB",
+            embeddingProvider: "openai",
+            embeddingModel: "text-embedding-3-small",
+            embeddingDim: PLATFORM_EMBEDDING_DIM,
+          },
+        }),
+      );
+      budgetKbId = kb.id;
+      await withTenantTransaction(budgetOrganizationId, (tx) =>
+        tx.organizationUsageLimit.create({
+          data: { organizationId: budgetOrganizationId, maxDocumentsPerDay: 200, maxEmbeddingTokensPerDay: 2_000_000, maxChatTokensPerDay: 1 },
+        }),
+      );
+    });
+
+    it("under 10 simultaneous requests against a budget too small for even one reservation, atomic reservation rejects every one of them", async () => {
+      // maxChatTokensPerDay: 1 (set in beforeAll) is smaller than any
+      // real reservation can ever be (a reservation is promptTokens +
+      // MAX_COMPLETION_TOKENS, and MAX_COMPLETION_TOKENS alone is always
+      // >= 1 — see estimateChatReservation). With the OLD peek-then-record
+      // design, all 10 of these truly concurrent requests (Promise.all,
+      // not a loop) would have seen the same stale "0 used so far" peek
+      // and been let through, since the peek check ran before any of
+      // them had generated (and therefore recorded) anything. With
+      // atomic reserve-before-generation, not even one of the 10 can
+      // ever fit — the clearest, most deterministic proof that the race
+      // is fixed: nothing about generation timing or how fast a response
+      // settles can create a window where a reservation this size is
+      // ever granted.
+      const responses = await Promise.all(
+        Array.from({ length: 10 }, (_, i) =>
+          app.inject({
+            method: "POST",
+            url: `/kb/${budgetKbId}/chat`,
+            cookies: { [SESSION_COOKIE_NAME]: outsiderCookie },
+            payload: { organizationId: budgetOrganizationId, message: `zero budget probe ${i} ${randomUUID()}` },
+          }),
+        ),
+      );
+
+      for (const response of responses) {
+        expect(response.statusCode).toBe(429);
+        expect(response.json()).toMatchObject({ error: { code: "RATE_LIMIT_EXCEEDED" } });
+      }
+    });
+
+    it("under 10 simultaneous requests against a comfortably large budget, all succeed and each settles to a real, distinct usage record", async () => {
+      // The companion case to the zero-budget test above: proves the
+      // reservation mechanism doesn't falsely reject legitimate concurrent
+      // traffic just because it's concurrent, and that every one of the
+      // 10 requests gets its own independent settle (not accidentally
+      // sharing or clobbering another's).
+      await withTenantTransaction(budgetOrganizationId, (tx) =>
+        tx.organizationUsageLimit.update({ where: { organizationId: budgetOrganizationId }, data: { maxChatTokensPerDay: 1_000_000 } }),
+      );
+
+      const responses = await Promise.all(
+        Array.from({ length: 10 }, (_, i) =>
+          app.inject({
+            method: "POST",
+            url: `/kb/${budgetKbId}/chat`,
+            cookies: { [SESSION_COOKIE_NAME]: outsiderCookie },
+            payload: { organizationId: budgetOrganizationId, message: `generous budget probe ${i} ${randomUUID()}` },
+          }),
+        ),
+      );
+
+      for (const response of responses) {
+        expect(response.statusCode).toBe(200);
+      }
+
+      // Every request's real usage was recorded — ten distinct
+      // CHAT_PROMPT_TOKENS events for this org, each a real settled
+      // amount, not zero (which would mean settlement never ran) and not
+      // the raw reservation ceiling (which would mean settlement never
+      // adjusted it down to the real, much smaller FakeLLMProvider
+      // output).
+      const events = await withTenantTransaction(budgetOrganizationId, (tx) => tx.usageEvent.findMany({ where: { type: "CHAT_PROMPT_TOKENS" } }));
+      expect(events).toHaveLength(10);
+      for (const event of events) {
+        const tokenCount = (event.metadata as Record<string, unknown>).tokenCount as number;
+        expect(tokenCount).toBeGreaterThan(0);
+      }
+    });
+  });
+
   async function lastConversationId(orgId: string): Promise<string> {
     const conversations = await withTenantTransaction(orgId, (tx) => tx.conversation.findMany({ orderBy: { createdAt: "desc" }, take: 1 }));
     return conversations[0]!.id;
