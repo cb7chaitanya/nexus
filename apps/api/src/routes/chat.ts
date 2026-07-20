@@ -187,7 +187,7 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
       if (accounting.source === "estimated") {
         request.log.warn(
           { conversationId: conversation.id },
-          "chat completion stream did not report token usage — falling back to a character-based estimate for billing/budget accounting",
+          "chat completion stream did not report token usage — falling back to a tokenizer-based estimate for billing/budget accounting",
         );
       }
       const { promptTokens, completionTokens, totalTokens, source: tokenSource } = accounting;
