@@ -23,6 +23,9 @@ guards) — there is no way to silently deploy with a blank secret.
 | `POSTGRES_PASSWORD` | yes | postgres, migrate | |
 | `POSTGRES_DB` | yes | postgres, migrate, api, worker | |
 | `POSTGRES_APP_PASSWORD` | yes | postgres, api, worker | Password for `raas_app`, the restricted role Prisma actually connects as at runtime — RLS is bypassed entirely by a superuser, so this must differ from `POSTGRES_PASSWORD`. See `packages/db/src/client.ts`. |
+| `DB_STATEMENT_TIMEOUT`, `DB_IDLE_IN_TRANSACTION_TIMEOUT` | no (`30s` / `10s`) | postgres | Postgres-side backstops applied as `raas_app` role defaults. See [Database connection pool and timeouts](#database-connection-pool-and-timeouts). |
+| `API_DB_CONNECTION_LIMIT`, `API_DB_POOL_TIMEOUT_SECONDS` | no (`10` / `20`) | api | Prisma client connection pool sizing for `apps/api`. See [Database connection pool and timeouts](#database-connection-pool-and-timeouts). |
+| `WORKER_DB_CONNECTION_LIMIT`, `WORKER_DB_POOL_TIMEOUT_SECONDS` | no (`15` / `20`) | worker | Prisma client connection pool sizing for `apps/worker`. See [Database connection pool and timeouts](#database-connection-pool-and-timeouts). |
 | `REDIS_PASSWORD` | yes | redis, api, worker | Redis backs BullMQ job data and rate-limit counters in production — always password-protected, unlike the local dev stack. |
 | `WEB_ORIGIN` | yes | api | The one origin allowed to make credentialed cross-origin requests. Never a wildcard — see `docs/cors-csrf-policy.md`. |
 | `SESSION_JWT_SECRET` | yes | api | HMAC signing key for session JWTs. Generate with `openssl rand -base64 48`; never reuse the dev value. |
@@ -42,6 +45,78 @@ guards) — there is no way to silently deploy with a blank secret.
 Full annotated defaults for every optional variable are in
 `docker-compose.prod.yml` itself (`${VAR:-default}`) and in
 `apps/api/src/env.ts` / `apps/worker/src/env.ts`.
+
+## Database connection pool and timeouts
+
+Two independent layers, both previously implicit/unset, now both explicit:
+
+**1. Client-side pool sizing (`API_DB_CONNECTION_LIMIT`/`WORKER_DB_CONNECTION_LIMIT`
+and their `_POOL_TIMEOUT_SECONDS` counterparts)** — Prisma reads
+`connection_limit`/`pool_timeout` as query-string parameters on the
+connection URL itself, not from `schema.prisma` (which only declares
+`url = env("DATABASE_URL")` — no code or schema change needed to tune
+these, only the URL `docker-compose.prod.yml` builds). Without them,
+Prisma's own default pool size is `num_physical_cpus*2+1` per process —
+`api` and `worker` are separate processes with completely independent,
+uncoordinated pools against the *same* Postgres instance. Defaults here:
+`API_DB_CONNECTION_LIMIT=10`, `WORKER_DB_CONNECTION_LIMIT=15` (worker
+gets more: it runs several concurrent BullMQ workers —
+processing/extraction/embedding/sweep/kb-cleanup, each with its own
+concurrency setting in `apps/worker/src/env.ts` — each potentially
+holding its own connection). 10 + 15 = 25 total, comfortably under
+Postgres's default `max_connections=100` (unmodified by this stack),
+leaving headroom for Postgres's own reserved superuser connections, the
+short-lived `migrate` job, manual `psql` access during an incident, and
+room to raise these before they'd become the bottleneck.
+
+**Scaling past a single replica of `api` or `worker` requires revisiting
+this math** — two `api` replicas at the default `connection_limit=10`
+means 20 connections from `api` alone. Size
+`(api replicas × API_DB_CONNECTION_LIMIT) + (worker replicas ×
+WORKER_DB_CONNECTION_LIMIT)` to stay comfortably under `max_connections`
+(raising `max_connections` itself, via a custom `postgres` `command:`/config
+file, is the other lever — not configured by this stack today).
+
+**2. Database-side timeouts (`DB_STATEMENT_TIMEOUT`/
+`DB_IDLE_IN_TRANSACTION_TIMEOUT`)** — applied as `raas_app` **role**
+defaults by `infra/postgres/init.prod.sh` (`ALTER ROLE raas_app SET
+...`), so they hold for every session that role opens regardless of
+which process or which pool it came from. These protect against a
+different failure mode than the pool settings above: `connection_limit`
+bounds how many connections a client *opens*; these bound what a
+connection can *do* once Postgres has it:
+
+- `statement_timeout` (default `30s`) kills any single SQL statement
+  that runs longer than this — a ceiling on a runaway or pathological
+  query.
+- `idle_in_transaction_session_timeout` (default `10s`) kills a
+  transaction that's open but has no statement currently executing —
+  the specific shape of application code holding a transaction open
+  across a slow or hung external call (an OpenAI request, for example)
+  instead of making that call outside the transaction. `statement_timeout`
+  does **not** catch this case (no statement is executing while the app
+  waits on the external call) — this is the setting that actually
+  reclaims that connection.
+
+**Important operational caveat:** `docker-entrypoint-initdb.d` scripts —
+`init.prod.sh` included — only run once, on first container start
+against a **fresh** `raas_postgres_data` volume. They do **not** re-run
+on a subsequent `docker compose up`, so an already-initialized production
+database (i.e., any deployment predating this configuration) will not
+pick up `DB_STATEMENT_TIMEOUT`/`DB_IDLE_IN_TRANSACTION_TIMEOUT`
+automatically. Apply them once, manually, against that database instead:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod exec postgres \
+  psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+  "ALTER ROLE raas_app SET statement_timeout = '30s'; ALTER ROLE raas_app SET idle_in_transaction_session_timeout = '10s';"
+```
+
+(Substitute the real values if overriding the defaults via
+`DB_STATEMENT_TIMEOUT`/`DB_IDLE_IN_TRANSACTION_TIMEOUT`.) This only needs
+running once per database — it's a role-level `ALTER`, not tied to any
+particular connection or container, and survives container
+restarts/redeploys from then on.
 
 ## Deployment order
 

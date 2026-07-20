@@ -29,3 +29,14 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO raas_app;
 -- DML rights on anything raas creates going forward.
 ALTER DEFAULT PRIVILEGES FOR ROLE raas IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO raas_app;
+
+-- Database-level backstops against a runaway query or a transaction left
+-- idle mid-flight (e.g. holding a connection open across a slow external
+-- call) — mirrors infra/postgres/init.prod.sh's identical ALTER ROLE
+-- statements (see that file's comment for the full reasoning on why both
+-- of these exist and why statement_timeout alone isn't enough). Same
+-- fixed values as that file's own defaults — no env-var parameterization
+-- needed here, this script already hardcodes everything else about local
+-- dev (see raas_app's password above).
+ALTER ROLE raas_app SET statement_timeout = '30s';
+ALTER ROLE raas_app SET idle_in_transaction_session_timeout = '10s';
