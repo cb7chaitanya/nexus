@@ -41,11 +41,40 @@ the network posture this assumes.
 | `raas_ingestion_jobs_started_total` | Counter | `queue`, `job_name` | worker |
 | `raas_ingestion_jobs_completed_total` | Counter | `queue`, `job_name` | worker |
 | `raas_ingestion_jobs_failed_total` | Counter | `queue`, `job_name` | worker |
+| `raas_ingestion_jobs_retried_total` | Counter | `queue`, `job_name` | worker |
 | `raas_document_processing_duration_seconds` | Histogram | `queue`, `job_name` | worker |
 | `raas_document_ingestion_duration_seconds` | Histogram | *(none)* | worker |
+| `raas_queue_depth` | Gauge | `queue` | worker |
+| `raas_queue_active_jobs` | Gauge | `queue` | worker |
 | `raas_embedding_tokens_total` | Counter | `model` | worker (recorded via `recordUsage`) |
 | `raas_llm_tokens_total` | Counter | `model`, `kind` (`prompt`\|`completion`) | api (recorded via `recordUsage`) |
 | `raas_process_*`, `raas_nodejs_*` | various | — | both (prom-client's `collectDefaultMetrics`) |
+
+All five `raas_ingestion_jobs_*`/`raas_document_processing_duration_seconds`
+metrics cover every queue this worker runs — `document-processing`,
+`document-extraction`, `document-embedding`, `document-sweep`, and
+`kb-cleanup` — not just the three-stage document-ingestion pipeline the
+`raas_ingestion_*` name suggests; the name predates the sweep/kb-cleanup
+maintenance workers being wired in and was kept for compatibility with
+existing dashboards/alerts rather than renamed.
+
+`raas_ingestion_jobs_retried_total` vs. `raas_ingestion_jobs_failed_total`:
+BullMQ emits a `failed` event on every failed *attempt*, not just the final
+one. `_failed_total` fires on all of them; `_retried_total` fires only when
+`job.finishedOn` is still unset at that point — BullMQ's own signal that it
+has already scheduled another attempt (see
+`apps/worker/src/lib/job-failure-alerts.ts`'s identical check). A permanent
+failure increments `_failed_total` but not `_retried_total`; a
+still-retryable attempt increments both.
+
+`raas_queue_depth`/`raas_queue_active_jobs` are gauges, not counters —
+point-in-time BullMQ state (`Queue#getJobCounts()`) sampled fresh on every
+`/metrics` scrape (see `packages/metrics/src/queue-metrics.ts`), the only
+way to reflect "how many jobs are waiting right now," since BullMQ has no
+event to increment/decrement a running counter against for that. Depth is
+waiting + delayed + prioritized + waiting-children (the same definition
+BullMQ's own `Queue#count()` uses); active is jobs currently being
+processed.
 
 Two duration metrics on the worker, deliberately distinct:
 
@@ -89,8 +118,21 @@ histogram_quantile(0.95, sum(rate(raas_http_request_duration_seconds_bucket[5m])
 # Ingestion failure rate by stage
 sum(rate(raas_ingestion_jobs_failed_total[5m])) by (queue, job_name)
 
+# Retry rate by stage — how much of the failure rate above is BullMQ
+# still retrying vs. permanently given up (compare against the failure
+# rate query above; a wide gap means most failures are transient)
+sum(rate(raas_ingestion_jobs_retried_total[5m])) by (queue, job_name)
+
 # p95 end-to-end document ingestion time
 histogram_quantile(0.95, sum(rate(raas_document_ingestion_duration_seconds_bucket[5m])) by (le))
+
+# Current backlog per queue — a growing raas_queue_depth with a flat
+# raas_queue_active_jobs (below) usually means under-provisioned
+# concurrency for that queue, not a slow external dependency
+raas_queue_depth
+
+# Jobs currently in flight per queue
+raas_queue_active_jobs
 
 # Embedding token spend rate
 sum(rate(raas_embedding_tokens_total[1h])) by (model)
