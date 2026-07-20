@@ -36,6 +36,22 @@ export const ingestionJobsFailedTotal = new Counter({
   registers: [registry],
 });
 
+// Distinct from ingestionJobsFailedTotal above: that counter fires on
+// EVERY failed attempt, permanent or not. This one only fires when
+// job.finishedOn is unset at failure time — BullMQ's own signal that it
+// has already scheduled another attempt (see
+// apps/worker/src/lib/job-failure-alerts.ts's identical check, which this
+// mirrors) — so this is specifically "how much retry churn is
+// happening," separable in PromQL from "how many attempts failed
+// outright" instead of having to be inferred from the gap between two
+// other counters.
+export const ingestionJobsRetriedTotal = new Counter({
+  name: "raas_ingestion_jobs_retried_total",
+  help: "Total ingestion pipeline job attempts that failed and were scheduled for another retry (excludes permanently-failed attempts)",
+  labelNames: jobLabelNames,
+  registers: [registry],
+});
+
 export const documentProcessingDurationSeconds = new Histogram({
   name: "raas_document_processing_duration_seconds",
   help: "Duration of a single ingestion pipeline job's own processing time (BullMQ processedOn to finishedOn), labeled by queue/job_name",

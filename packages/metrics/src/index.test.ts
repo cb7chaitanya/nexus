@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   documentIngestionDurationSeconds,
@@ -9,10 +9,15 @@ import {
   httpRequestsTotal,
   ingestionJobsCompletedTotal,
   ingestionJobsFailedTotal,
+  ingestionJobsRetriedTotal,
   ingestionJobsStartedTotal,
   llmTokensTotal,
+  queueActiveJobs,
+  queueDepth,
   recordHttpRequest,
+  registerQueueForMetrics,
   registry,
+  resetQueueMetricsRegistrationsForTesting,
 } from "./index.js";
 
 async function metricNames(): Promise<Set<string>> {
@@ -29,8 +34,11 @@ describe("@raas/metrics", () => {
     expect(names.has("raas_ingestion_jobs_started_total")).toBe(true);
     expect(names.has("raas_ingestion_jobs_completed_total")).toBe(true);
     expect(names.has("raas_ingestion_jobs_failed_total")).toBe(true);
+    expect(names.has("raas_ingestion_jobs_retried_total")).toBe(true);
     expect(names.has("raas_document_processing_duration_seconds")).toBe(true);
     expect(names.has("raas_document_ingestion_duration_seconds")).toBe(true);
+    expect(names.has("raas_queue_depth")).toBe(true);
+    expect(names.has("raas_queue_active_jobs")).toBe(true);
     expect(names.has("raas_embedding_tokens_total")).toBe(true);
     expect(names.has("raas_llm_tokens_total")).toBe(true);
   });
@@ -81,12 +89,14 @@ describe("@raas/metrics", () => {
     ingestionJobsStartedTotal.reset();
     ingestionJobsCompletedTotal.reset();
     ingestionJobsFailedTotal.reset();
+    ingestionJobsRetriedTotal.reset();
     documentProcessingDurationSeconds.reset();
     documentIngestionDurationSeconds.reset();
 
     ingestionJobsStartedTotal.inc({ queue: "document-extraction", job_name: "extract-text" });
     ingestionJobsCompletedTotal.inc({ queue: "document-extraction", job_name: "extract-text" });
     ingestionJobsFailedTotal.inc({ queue: "document-embedding", job_name: "embed-chunks" });
+    ingestionJobsRetriedTotal.inc({ queue: "document-embedding", job_name: "embed-chunks" });
     documentProcessingDurationSeconds.observe({ queue: "document-extraction", job_name: "extract-text" }, 1.5);
     documentIngestionDurationSeconds.observe(42);
 
@@ -95,6 +105,68 @@ describe("@raas/metrics", () => {
 
     const failed = await ingestionJobsFailedTotal.get();
     expect(failed.values[0]).toMatchObject({ labels: { queue: "document-embedding", job_name: "embed-chunks" }, value: 1 });
+
+    // Distinct from failed above — see ingestion-metrics.ts's own doc
+    // comment on why these are two separate counters, not one derived
+    // from the other.
+    const retried = await ingestionJobsRetriedTotal.get();
+    expect(retried.values[0]).toMatchObject({ labels: { queue: "document-embedding", job_name: "embed-chunks" }, value: 1 });
+  });
+
+  describe("queueDepth / queueActiveJobs", () => {
+    afterEach(() => {
+      resetQueueMetricsRegistrationsForTesting();
+      // A Gauge retains every label combination it has ever been .set()
+      // to until explicitly cleared — resetQueueMetricsRegistrationsForTesting
+      // only empties the *source* list collect() reads from next time, it
+      // doesn't retroactively erase values a previous scrape already
+      // recorded. Without this, "reports nothing for a never-registered
+      // queue" below would see this describe block's own earlier test
+      // data leaking across cases.
+      queueDepth.reset();
+      queueActiveJobs.reset();
+    });
+
+    it("reports depth (waiting+delayed+prioritized+waiting-children) and active counts for every registered queue, sampled at scrape time", async () => {
+      registerQueueForMetrics({
+        name: "document-extraction",
+        getJobCounts: async () => ({ waiting: 3, delayed: 1, prioritized: 0, "waiting-children": 2, active: 4, completed: 100, failed: 5 }),
+      });
+      registerQueueForMetrics({
+        name: "document-embedding",
+        getJobCounts: async () => ({ waiting: 0, active: 1 }),
+      });
+
+      // Neither gauge is set imperatively — both only populate on
+      // collect(), which registry.getMetricsAsJSON()/metrics() trigger
+      // internally. Calling .get() directly (as every other test in this
+      // file does) would read stale/empty state, since that path doesn't
+      // invoke collect() — this is the one metric type in this package
+      // where scrape-time sampling, not an inc()/observe() call site,
+      // is what actually produces a value.
+      const parsed = await registry.getMetricsAsJSON();
+      const depth = parsed.find((m) => m.name === "raas_queue_depth");
+      const active = parsed.find((m) => m.name === "raas_queue_active_jobs");
+
+      expect(depth?.values).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ labels: { queue: "document-extraction" }, value: 6 }),
+          expect.objectContaining({ labels: { queue: "document-embedding" }, value: 0 }),
+        ]),
+      );
+      expect(active?.values).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ labels: { queue: "document-extraction" }, value: 4 }),
+          expect.objectContaining({ labels: { queue: "document-embedding" }, value: 1 }),
+        ]),
+      );
+    });
+
+    it("reports nothing for a queue that was never registered", async () => {
+      const parsed = await registry.getMetricsAsJSON();
+      const depth = parsed.find((m) => m.name === "raas_queue_depth");
+      expect(depth?.values).toEqual([]);
+    });
   });
 
   it("usage counters accept token amounts, never an organizationId label", async () => {

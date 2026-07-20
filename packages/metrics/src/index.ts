@@ -5,7 +5,10 @@ export {
   ingestionJobsStartedTotal,
   ingestionJobsCompletedTotal,
   ingestionJobsFailedTotal,
+  ingestionJobsRetriedTotal,
   documentProcessingDurationSeconds,
   documentIngestionDurationSeconds,
 } from "./ingestion-metrics.js";
+export { queueDepth, queueActiveJobs, registerQueueForMetrics, resetQueueMetricsRegistrationsForTesting } from "./queue-metrics.js";
+export type { QueueCountsSource } from "./queue-metrics.js";
 export { embeddingTokensTotal, llmTokensTotal } from "./usage-metrics.js";
