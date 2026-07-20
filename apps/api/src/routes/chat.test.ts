@@ -16,7 +16,9 @@ import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { buildApp } from "../app.js";
+import { env } from "../env.js";
 import { redis } from "../lib/redis.js";
+import { estimateChatReservation } from "../lib/token-accounting.js";
 import { SESSION_COOKIE_NAME } from "../plugins/auth-guard.js";
 
 interface SseEvent {
@@ -528,6 +530,145 @@ describe("chat route", () => {
         const tokenCount = (event.metadata as Record<string, unknown>).tokenCount as number;
         expect(tokenCount).toBeGreaterThan(0);
       }
+    });
+  });
+
+  describe("adversarial prompt content", () => {
+    // A dedicated fresh signup, not outsiderCookie — this block alone
+    // makes 4 chat calls, and outsiderCookie already spent 20 of its
+    // RATE_LIMIT_CHAT_USER_RPM budget in the concurrent-budget describe
+    // block above (10 rejected-by-token-budget + 10 accepted, each still
+    // consuming an RPM slot since checkChatRateLimit runs before
+    // reserveChatTokenBudget) — reusing it here would make these
+    // assertions about the token-budget/validation path accidentally
+    // depend on the RPM limit instead, exactly the kind of cross-test
+    // coupling the "limited" user further below avoids for the same
+    // reason. Own org for the same isolation reasoning the concurrent
+    // budget block documents: keeps this block's own maxChatTokensPerDay
+    // edits from colliding with any other describe block's budget state.
+    let adversarialCookie: string;
+    let adversarialOrganizationId: string;
+    let adversarialKbId: string;
+
+    beforeAll(async () => {
+      const adversarial = await signup(app, `chat-adversarial-${suffix}@example.com`, password, `Chat Adversarial Org ${suffix}`);
+      adversarialCookie = adversarial.sessionCookie;
+      adversarialOrganizationId = adversarial.organizationId;
+
+      const kb = await withTenantTransaction(adversarialOrganizationId, (tx) =>
+        tx.knowledgeBase.create({
+          data: {
+            organizationId: adversarialOrganizationId,
+            name: "Adversarial KB",
+            embeddingProvider: "openai",
+            embeddingModel: "text-embedding-3-small",
+            embeddingDim: PLATFORM_EMBEDDING_DIM,
+          },
+        }),
+      );
+      adversarialKbId = kb.id;
+    });
+
+    async function setBudget(maxChatTokensPerDay: number): Promise<void> {
+      await withTenantTransaction(adversarialOrganizationId, (tx) =>
+        tx.organizationUsageLimit.upsert({
+          where: { organizationId: adversarialOrganizationId },
+          create: { organizationId: adversarialOrganizationId, maxDocumentsPerDay: 200, maxEmbeddingTokensPerDay: 2_000_000, maxChatTokensPerDay },
+          update: { maxChatTokensPerDay },
+        }),
+      );
+    }
+
+    // Same dense CJK content as token-accounting.test.ts's own unicode
+    // cases, repeated out to the schema's 4000-character cap
+    // (packages/shared/src/schemas/chat.ts) — the worst case for a
+    // length-based estimate: CJK script tokenizes close to 1 token per
+    // character, not 1 per 4, so a full-length message here is the
+    // largest possible gap between a chars/4 guess and the real cost.
+    const cjkBase = "这是一个关于退款政策和详细流程说明的问题，请解释清楚每一个步骤和时间安排。";
+    const maxLengthUnicodeMessage = cjkBase.repeat(Math.ceil(4000 / cjkBase.length)).slice(0, 4000);
+
+    it("rejects a max-length unicode-heavy prompt against a budget a chars/4 estimate would have wrongly let through", async () => {
+      // The real (tokenizer-based) reservation this request will actually
+      // make, versus what the old chars/4 heuristic would have reserved
+      // for the identical message — computed from the production
+      // estimator itself, not re-derived by hand, so this test tracks
+      // whatever MAX_COMPLETION_TOKENS/tokenizer is actually configured.
+      const realReservation = estimateChatReservation(maxLengthUnicodeMessage, env.MAX_COMPLETION_TOKENS);
+      const naiveCharsPer4Reservation = Math.ceil(maxLengthUnicodeMessage.length / 4) + env.MAX_COMPLETION_TOKENS;
+      expect(realReservation).toBeGreaterThan(naiveCharsPer4Reservation);
+
+      // A budget strictly between the two: large enough that the OLD
+      // (chars/4) reservation would have fit — letting the request reach
+      // real generation despite not actually affording it — too small for
+      // the NEW (real-tokenizer) reservation to fit. This is exactly the
+      // abuse case reserve-then-settle-with-a-real-tokenizer closes: a
+      // user filling the prompt with dense-tokenizing script specifically
+      // to make the pre-flight budget check under-count their request.
+      const budget = Math.floor((realReservation + naiveCharsPer4Reservation) / 2);
+      await setBudget(budget);
+
+      const response = await app.inject({
+        method: "POST",
+        url: `/kb/${adversarialKbId}/chat`,
+        cookies: { [SESSION_COOKIE_NAME]: adversarialCookie },
+        payload: { organizationId: adversarialOrganizationId, message: maxLengthUnicodeMessage },
+      });
+
+      expect(response.statusCode).toBe(429);
+      expect(response.json()).toMatchObject({ error: { code: "RATE_LIMIT_EXCEEDED" } });
+    });
+
+    it("accepts and settles a real, non-trivial usage record for the same max-length unicode-heavy prompt once the budget can actually afford the real-tokenizer reservation", async () => {
+      const realReservation = estimateChatReservation(maxLengthUnicodeMessage, env.MAX_COMPLETION_TOKENS);
+      await setBudget(realReservation + 1000);
+
+      const response = await app.inject({
+        method: "POST",
+        url: `/kb/${adversarialKbId}/chat`,
+        cookies: { [SESSION_COOKIE_NAME]: adversarialCookie },
+        payload: { organizationId: adversarialOrganizationId, message: maxLengthUnicodeMessage },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const conversationId = await lastConversationId(adversarialOrganizationId);
+      const events = await withTenantTransaction(adversarialOrganizationId, (tx) =>
+        tx.usageEvent.findMany({ where: { type: "CHAT_PROMPT_TOKENS", metadata: { path: ["conversationId"], equals: conversationId } } }),
+      );
+      expect(events).toHaveLength(1);
+      const tokenCount = (events[0]!.metadata as Record<string, unknown>).tokenCount as number;
+      expect(tokenCount).toBeGreaterThan(0);
+    });
+
+    it("rejects a message over the schema's max length with a normal validation error, before any budget reservation or generation cost is incurred", async () => {
+      await setBudget(1_000_000);
+      const overLengthMessage = "a".repeat(4001);
+
+      const response = await app.inject({
+        method: "POST",
+        url: `/kb/${adversarialKbId}/chat`,
+        cookies: { [SESSION_COOKIE_NAME]: adversarialCookie },
+        payload: { organizationId: adversarialOrganizationId, message: overLengthMessage },
+      });
+
+      expect(response.statusCode).toBe(422);
+    });
+
+    it("accepts a message at exactly the schema's max length (4000 chars) and reserves a proportionally large, finite budget amount", async () => {
+      const maxLengthAsciiMessage = "The quick brown fox jumps over the lazy dog. ".repeat(90).slice(0, 4000);
+      expect(maxLengthAsciiMessage.length).toBe(4000);
+      await setBudget(1_000_000);
+
+      const response = await app.inject({
+        method: "POST",
+        url: `/kb/${adversarialKbId}/chat`,
+        cookies: { [SESSION_COOKIE_NAME]: adversarialCookie },
+        payload: { organizationId: adversarialOrganizationId, message: maxLengthAsciiMessage },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.headers["x-ratelimit-remaining"]).toBeDefined();
+      expect(Number(response.headers["x-ratelimit-remaining"])).toBeLessThan(1_000_000);
     });
   });
 
