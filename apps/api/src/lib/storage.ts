@@ -119,20 +119,34 @@ const DELETE_BATCH_SIZE = 1000;
 
 /**
  * Batch-deletes every key given, chunked into groups of 1000 (S3's own
- * per-call limit). Used by DELETE /kb/:id's synchronous (small-KB) path —
- * see apps/worker's cleanup-knowledge-base processor for the async
- * (large-KB) equivalent. Deleting a key that doesn't exist is not an
- * error (S3's own semantics), which is what makes retrying this safe.
+ * per-call limit). Used by DELETE /kb/:id's synchronous (small-KB) path
+ * and DELETE /documents/:id — see apps/worker's cleanup-knowledge-base
+ * and cleanup-document-storage processors for their retry-safe async
+ * equivalents. Deleting a key that doesn't exist is not an error (S3's
+ * own semantics), which is what makes retrying this safe.
+ *
+ * DeleteObjectsCommand itself returns HTTP 200 (does not reject) even
+ * when SOME keys in the batch failed — S3 reports those individually in
+ * the response body's `Errors` array rather than failing the whole call.
+ * Ignoring that array (as this function used to) meant a caller could
+ * believe a delete fully succeeded when it only partially did, with no
+ * exception ever thrown to trigger a retry — silently orphaning whichever
+ * keys actually failed. Checking it here, once, means every caller's
+ * existing try/catch-and-retry handling covers this case for free.
  */
 export async function deleteObjects(keys: string[]): Promise<void> {
   for (let i = 0; i < keys.length; i += DELETE_BATCH_SIZE) {
     const batch = keys.slice(i, i + DELETE_BATCH_SIZE);
     if (batch.length === 0) continue;
-    await s3.send(
+    const result = await s3.send(
       new DeleteObjectsCommand({
         Bucket: env.S3_BUCKET,
         Delete: { Objects: batch.map((key) => ({ Key: key })) },
       }),
     );
+    if (result.Errors && result.Errors.length > 0) {
+      const summary = result.Errors.map((e) => `${e.Key}: ${e.Code} ${e.Message ?? ""}`.trim()).join("; ");
+      throw new Error(`deleteObjects: ${result.Errors.length} of ${batch.length} object(s) failed to delete: ${summary}`);
+    }
   }
 }
