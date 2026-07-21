@@ -28,18 +28,24 @@ export function useDocuments(knowledgeBaseId: string, organizationId: string) {
   });
 }
 
+export interface UploadDocumentVariables {
+  file: File;
+  onProgress?: (percent: number) => void;
+}
+
 export function useUploadDocument(knowledgeBaseId: string, organizationId: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async ({ file, onProgress }: UploadDocumentVariables) => {
       const { document, uploadUrl } = await presignDocument(knowledgeBaseId, {
         organizationId,
         fileName: file.name,
         mimeType: file.type || "application/octet-stream",
         sizeBytes: file.size,
       });
-      await uploadToPresignedUrl(uploadUrl, file);
+      await uploadToPresignedUrl(uploadUrl, file, onProgress);
+      onProgress?.(100);
       return completeDocument(document.id, organizationId);
     },
     onSuccess: () => {

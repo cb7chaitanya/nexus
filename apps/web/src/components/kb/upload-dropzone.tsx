@@ -1,17 +1,19 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { CheckIcon, Loader2Icon, UploadCloudIcon, XIcon } from "lucide-react";
+import { CheckIcon, FileIcon, UploadCloudIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
 import { useUploadDocument } from "@/hooks/use-documents";
 import { isApiError } from "@/lib/api-error";
+import { Progress } from "@/components/ui/progress";
 
 interface UploadItem {
   id: string;
   name: string;
   status: "uploading" | "done" | "error";
+  progress: number;
   error?: string;
 }
 
@@ -32,23 +34,33 @@ export function UploadDropzone({
 
     for (const file of Array.from(fileList)) {
       const id = crypto.randomUUID();
-      setItems((prev) => [...prev, { id, name: file.name, status: "uploading" }]);
+      setItems((prev) => [...prev, { id, name: file.name, status: "uploading", progress: 0 }]);
 
-      uploadDocument.mutate(file, {
-        onSuccess: () => {
-          setItems((prev) => prev.map((item) => (item.id === id ? { ...item, status: "done" } : item)));
-          setTimeout(() => {
-            setItems((prev) => prev.filter((item) => item.id !== id));
-          }, 2500);
+      uploadDocument.mutate(
+        {
+          file,
+          onProgress: (percent) => {
+            setItems((prev) => prev.map((item) => (item.id === id ? { ...item, progress: percent } : item)));
+          },
         },
-        onError: (error) => {
-          const message = isApiError(error) ? error.message : "Upload failed";
-          setItems((prev) =>
-            prev.map((item) => (item.id === id ? { ...item, status: "error", error: message } : item)),
-          );
-          toast.error(`${file.name}: ${message}`);
+        {
+          onSuccess: () => {
+            setItems((prev) =>
+              prev.map((item) => (item.id === id ? { ...item, status: "done", progress: 100 } : item)),
+            );
+            setTimeout(() => {
+              setItems((prev) => prev.filter((item) => item.id !== id));
+            }, 2500);
+          },
+          onError: (error) => {
+            const message = isApiError(error) ? error.message : "Upload failed";
+            setItems((prev) =>
+              prev.map((item) => (item.id === id ? { ...item, status: "error", error: message } : item)),
+            );
+            toast.error(`${file.name}: ${message}`);
+          },
         },
-      });
+      );
     }
   }
 
@@ -70,11 +82,15 @@ export function UploadDropzone({
           handleFiles(e.dataTransfer.files);
         }}
         className={cn(
-          "flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-10 text-center transition-colors",
-          isDragging ? "border-primary bg-accent/40" : "border-border hover:border-primary/40 hover:bg-accent/20",
+          "flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-10 text-center transition-all duration-200",
+          isDragging
+            ? "scale-[1.01] border-primary bg-accent/40 shadow-sm"
+            : "border-border hover:border-primary/40 hover:bg-accent/20",
         )}
       >
-        <UploadCloudIcon className="size-6 text-muted-foreground" />
+        <UploadCloudIcon
+          className={cn("size-6 transition-transform duration-200", isDragging ? "scale-110 text-primary" : "text-muted-foreground")}
+        />
         <p className="mt-3 text-sm font-medium">Drop files to upload, or click to browse</p>
         <p className="mt-1 text-xs text-muted-foreground">PDF, TXT, Markdown, and more · up to 1 GB per file</p>
         <input
@@ -94,17 +110,22 @@ export function UploadDropzone({
           {items.map((item) => (
             <div
               key={item.id}
-              className="flex items-center gap-2.5 rounded-md border border-border bg-card px-3 py-2 text-sm"
+              className="flex items-center gap-3 rounded-md border border-border bg-card px-3 py-2.5 text-sm"
             >
-              {item.status === "uploading" && <Loader2Icon className="size-4 animate-spin text-muted-foreground" />}
-              {item.status === "done" && <CheckIcon className="size-4 text-success" />}
-              {item.status === "error" && <XIcon className="size-4 text-destructive" />}
-              <span className="flex-1 truncate">{item.name}</span>
-              <span className="shrink-0 text-xs text-muted-foreground">
-                {item.status === "uploading" && "Uploading…"}
-                {item.status === "done" && "Uploaded"}
-                {item.status === "error" && (item.error ?? "Failed")}
-              </span>
+              {item.status === "uploading" && <FileIcon className="size-4 shrink-0 text-muted-foreground" />}
+              {item.status === "done" && <CheckIcon className="size-4 shrink-0 text-success" />}
+              {item.status === "error" && <XIcon className="size-4 shrink-0 text-destructive" />}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate">{item.name}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {item.status === "uploading" && `${item.progress}%`}
+                    {item.status === "done" && "Uploaded"}
+                    {item.status === "error" && (item.error ?? "Failed")}
+                  </span>
+                </div>
+                {item.status === "uploading" && <Progress value={item.progress} className="mt-1.5 h-1" />}
+              </div>
             </div>
           ))}
         </div>

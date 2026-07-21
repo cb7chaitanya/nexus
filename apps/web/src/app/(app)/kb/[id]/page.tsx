@@ -3,10 +3,14 @@
 import { use, useState } from "react";
 import Link from "next/link";
 import {
+  ArrowLeftIcon,
   FileTextIcon,
+  HardDriveIcon,
+  LayersIcon,
   MessageCircleIcon,
   MoreHorizontalIcon,
   PencilIcon,
+  SearchXIcon,
   TrashIcon,
 } from "lucide-react";
 
@@ -18,10 +22,10 @@ import { UploadDropzone } from "@/components/kb/upload-dropzone";
 import { DocumentsTable } from "@/components/kb/documents-table";
 import { RenameKnowledgeBaseDialog } from "@/components/kb/rename-knowledge-base-dialog";
 import { DeleteKnowledgeBaseDialog } from "@/components/kb/delete-knowledge-base-dialog";
+import { StatCard } from "@/components/dashboard/stat-card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -66,8 +70,19 @@ export default function KnowledgeBaseDetailPage({
 
   if (!kb.data) {
     return (
-      <div className="px-6 py-16 text-center text-sm text-muted-foreground">
-        Knowledge base not found.
+      <div className="px-6 py-16">
+        <EmptyState
+          icon={SearchXIcon}
+          title="Knowledge base not found"
+          description="It may have been deleted, or you may not have access to it."
+          action={
+            <Button variant="outline" asChild>
+              <Link href="/kb">
+                <ArrowLeftIcon /> Back to knowledge bases
+              </Link>
+            </Button>
+          }
+        />
       </div>
     );
   }
@@ -105,24 +120,9 @@ export default function KnowledgeBaseDetailPage({
 
       <div className="space-y-8 px-6 py-6">
         <div className="grid gap-4 sm:grid-cols-3">
-          <Card className="py-4">
-            <CardContent>
-              <p className="text-xs text-muted-foreground">Documents</p>
-              <p className="mt-1 text-lg font-semibold">{kb.data.stats.documentCount}</p>
-            </CardContent>
-          </Card>
-          <Card className="py-4">
-            <CardContent>
-              <p className="text-xs text-muted-foreground">Chunks indexed</p>
-              <p className="mt-1 text-lg font-semibold">{kb.data.stats.chunkCount}</p>
-            </CardContent>
-          </Card>
-          <Card className="py-4">
-            <CardContent>
-              <p className="text-xs text-muted-foreground">Storage used</p>
-              <p className="mt-1 text-lg font-semibold">{formatBytes(kb.data.stats.storageBytes)}</p>
-            </CardContent>
-          </Card>
+          <StatCard label="Documents" icon={FileTextIcon} value={String(kb.data.stats.documentCount)} />
+          <StatCard label="Chunks indexed" icon={LayersIcon} value={String(kb.data.stats.chunkCount)} />
+          <StatCard label="Storage used" icon={HardDriveIcon} value={formatBytes(kb.data.stats.storageBytes)} />
         </div>
 
         <section>
@@ -141,7 +141,7 @@ export default function KnowledgeBaseDetailPage({
               description="Upload PDFs or text files above to start building this knowledge base."
             />
           ) : (
-            <div className="rounded-xl border border-border">
+            <div className="overflow-hidden rounded-xl border border-border">
               <DocumentsTable documents={docs} knowledgeBaseId={id} organizationId={currentOrganization.id} />
             </div>
           )}
