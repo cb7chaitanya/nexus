@@ -13,22 +13,7 @@ import { buildApp } from "../app.js";
 import { DOCUMENT_METADATA_BODY_LIMIT_BYTES, GLOBAL_BODY_LIMIT_BYTES } from "../lib/body-limits.js";
 import { redis } from "../lib/redis.js";
 import { SESSION_COOKIE_NAME } from "../plugins/auth-guard.js";
-
-async function signup(
-  app: FastifyInstance,
-  email: string,
-  password: string,
-  organizationName: string,
-): Promise<{ sessionCookie: string; organizationId: string }> {
-  const response = await app.inject({
-    method: "POST",
-    url: "/auth/signup",
-    payload: { email, password, organizationName },
-  });
-  const cookie = response.cookies.find((c) => c.name === SESSION_COOKIE_NAME);
-  const body = response.json();
-  return { sessionCookie: cookie!.value, organizationId: body.organizations[0].id };
-}
+import { signup } from "../test-support/signup.js";
 
 describe("body limits", () => {
   let app: FastifyInstance;

@@ -17,22 +17,7 @@ import { env } from "../env.js";
 import { redis } from "../lib/redis.js";
 import { objectExists, s3 } from "../lib/storage.js";
 import { SESSION_COOKIE_NAME } from "../plugins/auth-guard.js";
-
-async function signup(
-  app: FastifyInstance,
-  email: string,
-  password: string,
-  organizationName: string,
-): Promise<{ sessionCookie: string; userId: string; organizationId: string }> {
-  const response = await app.inject({
-    method: "POST",
-    url: "/auth/signup",
-    payload: { email, password, organizationName },
-  });
-  const cookie = response.cookies.find((c) => c.name === SESSION_COOKIE_NAME);
-  const body = response.json();
-  return { sessionCookie: cookie!.value, userId: body.user.id, organizationId: body.organizations[0].id };
-}
+import { signup } from "../test-support/signup.js";
 
 async function presignDocument(
   app: FastifyInstance,

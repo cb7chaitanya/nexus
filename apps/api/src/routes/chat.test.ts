@@ -20,6 +20,7 @@ import { env } from "../env.js";
 import { redis } from "../lib/redis.js";
 import { estimateChatReservation } from "../lib/token-accounting.js";
 import { SESSION_COOKIE_NAME } from "../plugins/auth-guard.js";
+import { signup } from "../test-support/signup.js";
 
 interface SseEvent {
   event: string;
@@ -37,22 +38,6 @@ function parseSse(payload: string): SseEvent[] {
       const dataLine = block.split("\n").find((line) => line.startsWith("data:"))!;
       return { event: eventLine.slice("event:".length).trim(), data: JSON.parse(dataLine.slice("data:".length).trim()) };
     });
-}
-
-async function signup(
-  app: FastifyInstance,
-  email: string,
-  password: string,
-  organizationName: string,
-): Promise<{ sessionCookie: string; userId: string; organizationId: string }> {
-  const response = await app.inject({
-    method: "POST",
-    url: "/auth/signup",
-    payload: { email, password, organizationName },
-  });
-  const cookie = response.cookies.find((c) => c.name === SESSION_COOKIE_NAME);
-  const body = response.json();
-  return { sessionCookie: cookie!.value, userId: body.user.id, organizationId: body.organizations[0].id };
 }
 
 describe("chat route", () => {

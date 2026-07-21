@@ -43,6 +43,13 @@ export const env = {
   WEB_ORIGIN: process.env.WEB_ORIGIN ?? "http://localhost:3000",
   SESSION_JWT_SECRET: requireEnv("SESSION_JWT_SECRET"),
   SESSION_TTL_SECONDS: Number(process.env.SESSION_TTL_SECONDS ?? 60 * 60 * 24 * 7),
+  // Signup is gated on a 6-digit OTP emailed to the address given — see
+  // lib/pending-signup.ts. How long a pending (unconfirmed) signup lives
+  // in Redis before it must be restarted, and how many wrong-code guesses
+  // are tolerated before the pending signup is locked out (still subject
+  // to the TTL above; a fresh POST /auth/signup starts over regardless).
+  SIGNUP_OTP_TTL_SECONDS: requirePositiveInt("SIGNUP_OTP_TTL_SECONDS", process.env.SIGNUP_OTP_TTL_SECONDS, 600),
+  MAX_OTP_ATTEMPTS: requirePositiveInt("MAX_OTP_ATTEMPTS", process.env.MAX_OTP_ATTEMPTS, 5),
   S3_ENDPOINT: requireEnv("S3_ENDPOINT"),
   S3_REGION: process.env.S3_REGION ?? "us-east-1",
   S3_BUCKET: requireEnv("S3_BUCKET"),

@@ -21,26 +21,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
 import { redis } from "../lib/redis.js";
 import { SESSION_COOKIE_NAME } from "../plugins/auth-guard.js";
+import { signup } from "../test-support/signup.js";
 
 interface CapturedBindings {
   url: string;
   bindings: Record<string, unknown>;
-}
-
-async function signup(
-  app: FastifyInstance,
-  email: string,
-  password: string,
-  organizationName: string,
-): Promise<{ sessionCookie: string; organizationId: string }> {
-  const response = await app.inject({
-    method: "POST",
-    url: "/auth/signup",
-    payload: { email, password, organizationName },
-  });
-  const cookie = response.cookies.find((c) => c.name === SESSION_COOKIE_NAME);
-  const body = response.json();
-  return { sessionCookie: cookie!.value, organizationId: body.organizations[0].id };
 }
 
 describe("request logging context", () => {
@@ -133,7 +118,7 @@ describe("request logging context", () => {
       url: "/auth/signup",
       payload: { email: `logctx-anon-${suffix}@example.com`, password: "correct-horse-battery-staple", organizationName: "Anon Org" },
     });
-    expect(response.statusCode).toBe(201);
+    expect(response.statusCode).toBe(202);
 
     const entry = captured.find((c) => c.url === "/auth/signup");
     expect(entry).toBeDefined();

@@ -1,9 +1,27 @@
-import { ApiError, loginSchema, parseOrThrow, signupSchema } from "@raas/shared";
+import {
+  ApiError,
+  loginSchema,
+  parseOrThrow,
+  resendSignupOtpSchema,
+  signupSchema,
+  verifySignupOtpSchema,
+} from "@raas/shared";
 import { prisma, setTenantContext, withUserContext } from "@raas/db";
 import type { FastifyInstance } from "fastify";
 
+import { env } from "../env.js";
 import { clearSessionCookie, setSessionCookie } from "../lib/cookies.js";
+import { buildSignupOtpEmail } from "../lib/email-templates.js";
+import { enqueueTransactionalEmail } from "../lib/email-queue.js";
+import { hashOtp } from "../lib/otp.js";
 import { hashPassword, verifyPassword } from "../lib/passwords.js";
+import {
+  consumePendingSignup,
+  getPendingSignup,
+  recordFailedAttempt,
+  refreshOtp,
+  createPendingSignup,
+} from "../lib/pending-signup.js";
 import { authRateLimit } from "../lib/rate-limit.js";
 import { toPublicUser } from "../lib/serializers.js";
 import { createSession, destroySession, resolveSession } from "../lib/session.js";
@@ -11,6 +29,9 @@ import { generateUniqueSlug } from "../lib/slugify.js";
 import { requireAuth, SESSION_COOKIE_NAME } from "../plugins/auth-guard.js";
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
+  // Stages the signup and emails a 6-digit code — does NOT create the
+  // User/Organization or a session. See lib/pending-signup.ts for why
+  // this lives in Redis rather than a Postgres table.
   app.post("/auth/signup", { preHandler: authRateLimit }, async (request, reply) => {
     const input = parseOrThrow(signupSchema, request.body);
 
@@ -20,27 +41,69 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const passwordHash = await hashPassword(input.password);
+    const { pendingSignupId, otp } = await createPendingSignup({
+      email: input.email,
+      passwordHash,
+      name: input.name,
+      organizationName: input.organizationName,
+      organizationSlug: input.organizationSlug,
+    });
+
+    const email = buildSignupOtpEmail({ name: input.name, otp });
+    await enqueueTransactionalEmail({ to: input.email, ...email });
+
+    reply.status(202).send({
+      pendingSignupId,
+      email: input.email,
+      expiresInSeconds: env.SIGNUP_OTP_TTL_SECONDS,
+    });
+  });
+
+  // Completes a pending signup: verifies the code, THEN creates the
+  // User/Organization/OWNER-membership (same atomic transaction the old
+  // signup handler ran inline) with emailVerified already true, and logs
+  // the new user in.
+  app.post("/auth/signup/verify", { preHandler: authRateLimit }, async (request, reply) => {
+    const input = parseOrThrow(verifySignupOtpSchema, request.body);
+
+    const record = await getPendingSignup(input.pendingSignupId);
+    if (!record) {
+      throw ApiError.notFound("This signup has expired. Please sign up again.");
+    }
+
+    if (record.attempts >= env.MAX_OTP_ATTEMPTS) {
+      await consumePendingSignup(input.pendingSignupId);
+      throw ApiError.unauthorized("Too many incorrect attempts. Please sign up again.");
+    }
+
+    if (hashOtp(input.code) !== record.hashedOtp) {
+      await recordFailedAttempt(input.pendingSignupId, record);
+      const remaining = env.MAX_OTP_ATTEMPTS - (record.attempts + 1);
+      throw ApiError.unauthorized(
+        remaining > 0 ? `Incorrect code. ${remaining} attempt(s) remaining.` : "Incorrect code. Please sign up again.",
+      );
+    }
+
+    // Re-check for a conflicting email here too — another signup for the
+    // same address could have completed verification first during this
+    // one's OTP wait window.
+    const existing = await prisma.user.findUnique({ where: { email: record.email } });
+    if (existing) {
+      await consumePendingSignup(input.pendingSignupId);
+      throw ApiError.conflict("An account with this email already exists");
+    }
+
     const slug = await generateUniqueSlug(
-      input.organizationSlug ?? input.organizationName,
+      record.organizationSlug ?? record.organizationName,
       async (candidate) => (await prisma.organization.findUnique({ where: { slug: candidate } })) !== null,
     );
 
-    // Atomic: user, org, AND the owner membership are all created in ONE
-    // transaction — a failure anywhere rolls back everything, so signup
-    // is genuinely all-or-nothing, not "mostly atomic with a
-    // compensating delete if the last step fails" (which still had a
-    // real gap: a process crash between steps could orphan a user+org
-    // with no owner and no way to clean it up). setTenantContext sets
-    // app.current_org_id for the rest of THIS transaction using the org
-    // id just created — withTenantTransaction can't be used here since
-    // it always opens its own new transaction, and the org doesn't exist
-    // yet before this one starts.
     const { user, organization } = await prisma.$transaction(async (tx) => {
       const createdUser = await tx.user.create({
-        data: { email: input.email, passwordHash, name: input.name },
+        data: { email: record.email, passwordHash: record.passwordHash, name: record.name, emailVerified: true },
       });
       const createdOrg = await tx.organization.create({
-        data: { name: input.organizationName, slug },
+        data: { name: record.organizationName, slug },
       });
       await setTenantContext(tx, createdOrg.id);
       await tx.organizationMember.create({
@@ -49,6 +112,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       return { user: createdUser, organization: createdOrg };
     });
 
+    await consumePendingSignup(input.pendingSignupId);
+
     const session = await createSession(user.id);
     setSessionCookie(reply, session.token);
 
@@ -56,6 +121,21 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       user: toPublicUser(user),
       organizations: [{ ...organization, role: "OWNER" as const }],
     });
+  });
+
+  app.post("/auth/signup/resend-otp", { preHandler: authRateLimit }, async (request, reply) => {
+    const input = parseOrThrow(resendSignupOtpSchema, request.body);
+
+    const record = await getPendingSignup(input.pendingSignupId);
+    if (!record) {
+      throw ApiError.notFound("This signup has expired. Please sign up again.");
+    }
+
+    const { otp } = await refreshOtp(input.pendingSignupId, record);
+    const email = buildSignupOtpEmail({ name: record.name, otp });
+    await enqueueTransactionalEmail({ to: record.email, ...email });
+
+    reply.status(202).send({ expiresInSeconds: env.SIGNUP_OTP_TTL_SECONDS });
   });
 
   app.post("/auth/login", { preHandler: authRateLimit }, async (request, reply) => {

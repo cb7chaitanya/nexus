@@ -2,16 +2,36 @@
  * Integration tests against real Postgres + Redis via app.inject() — no
  * mocking of either. Prerequisites: docker compose up -d, migrations
  * applied (pnpm --filter @raas/db migrate:deploy).
+ *
+ * Signup no longer creates a session directly (see routes/auth.ts) — it
+ * enqueues an OTP email job instead of sending one (no worker process
+ * runs in this suite), so tests read the code straight off the
+ * email-delivery queue rather than consuming a real inbox.
  */
 import { randomUUID } from "node:crypto";
 
+import { JOB_NAMES, QUEUE_NAMES } from "@raas/shared";
 import { prisma } from "@raas/db";
+import { Queue } from "bullmq";
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { buildApp } from "../app.js";
 import { redis } from "../lib/redis.js";
 import { SESSION_COOKIE_NAME } from "../plugins/auth-guard.js";
+
+const emailQueue = new Queue(QUEUE_NAMES.email, { connection: redis });
+
+async function getLatestOtpFor(email: string): Promise<string> {
+  const jobs = await emailQueue.getJobs(["waiting", "completed"]);
+  const match = jobs
+    .filter((job) => job.name === JOB_NAMES.sendTransactionalEmail && job.data.to === email)
+    .sort((a, b) => b.timestamp - a.timestamp)[0];
+  if (!match) throw new Error(`no OTP email job found for ${email}`);
+  const otpMatch = (match.data.text as string).match(/verification code is (\d{6})/);
+  if (!otpMatch) throw new Error(`could not find a 6-digit code in email body: ${match.data.text}`);
+  return otpMatch[1]!;
+}
 
 describe("auth routes", () => {
   let app: FastifyInstance;
@@ -27,10 +47,11 @@ describe("auth routes", () => {
     await app.close();
     await prisma.user.deleteMany({ where: { email: { contains: suffix } } });
     await prisma.organization.deleteMany({ where: { slug: { contains: suffix } } });
+    await emailQueue.close();
     await redis.quit();
   });
 
-  it("signs up a new user with a new organization, setting a session cookie", async () => {
+  it("stages a pending signup and emails an OTP, without creating a session", async () => {
     const response = await app.inject({
       method: "POST",
       url: "/auth/signup",
@@ -42,23 +63,116 @@ describe("auth routes", () => {
       },
     });
 
-    expect(response.statusCode).toBe(201);
+    expect(response.statusCode).toBe(202);
     const body = response.json();
-    expect(body.user.email).toBe(email);
-    expect(body.user.passwordHash).toBeUndefined();
-    expect(body.organizations).toHaveLength(1);
-    expect(body.organizations[0].role).toBe("OWNER");
+    expect(body.pendingSignupId).toBeTruthy();
+    expect(body.email).toBe(email);
+    expect(response.cookies.find((c) => c.name === SESSION_COOKIE_NAME)).toBeUndefined();
+    expect(await prisma.user.findUnique({ where: { email } })).toBeNull();
+  });
 
-    const cookie = response.cookies.find((c) => c.name === SESSION_COOKIE_NAME);
+  it("rejects the wrong code and reports attempts remaining, then accepts the right one", async () => {
+    const signup = await app.inject({
+      method: "POST",
+      url: "/auth/signup",
+      payload: { email: `otp-${suffix}@example.com`, password, organizationName: `OTP Org ${suffix}` },
+    });
+    const { pendingSignupId } = signup.json();
+    const otp = await getLatestOtpFor(`otp-${suffix}@example.com`);
+
+    const wrong = await app.inject({
+      method: "POST",
+      url: "/auth/signup/verify",
+      payload: { pendingSignupId, code: otp === "000000" ? "111111" : "000000" },
+    });
+    expect(wrong.statusCode).toBe(401);
+    expect(wrong.json().error.message).toContain("attempt(s) remaining");
+
+    const right = await app.inject({
+      method: "POST",
+      url: "/auth/signup/verify",
+      payload: { pendingSignupId, code: otp },
+    });
+    expect(right.statusCode).toBe(201);
+    const body = right.json();
+    expect(body.user.email).toBe(`otp-${suffix}@example.com`);
+    expect(body.user.emailVerified).toBe(true);
+    expect(body.organizations[0].role).toBe("OWNER");
+    const cookie = right.cookies.find((c) => c.name === SESSION_COOKIE_NAME);
     expect(cookie).toBeDefined();
     expect(cookie?.httpOnly).toBe(true);
   });
 
-  it("rejects signup with a duplicate email", async () => {
+  it("locks out and expires the pending signup after too many wrong attempts", async () => {
+    const signup = await app.inject({
+      method: "POST",
+      url: "/auth/signup",
+      payload: { email: `lockout-${suffix}@example.com`, password, organizationName: `Lockout Org ${suffix}` },
+    });
+    const { pendingSignupId } = signup.json();
+
+    let last;
+    for (let i = 0; i < 6; i++) {
+      last = await app.inject({
+        method: "POST",
+        url: "/auth/signup/verify",
+        payload: { pendingSignupId, code: "000001" },
+      });
+    }
+    expect(last!.statusCode).toBe(401);
+    expect(last!.json().error.message).toContain("Please sign up again");
+
+    const afterLockout = await app.inject({
+      method: "POST",
+      url: "/auth/signup/verify",
+      payload: { pendingSignupId, code: "000001" },
+    });
+    expect(afterLockout.statusCode).toBe(404);
+  });
+
+  it("rejects verification for an unknown or expired pendingSignupId", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/auth/signup/verify",
+      payload: { pendingSignupId: randomUUID(), code: "123456" },
+    });
+    expect(response.statusCode).toBe(404);
+  });
+
+  it("resend-otp issues a new code that invalidates the old one", async () => {
+    const signup = await app.inject({
+      method: "POST",
+      url: "/auth/signup",
+      payload: { email: `resend-${suffix}@example.com`, password, organizationName: `Resend Org ${suffix}` },
+    });
+    const { pendingSignupId } = signup.json();
+    const firstOtp = await getLatestOtpFor(`resend-${suffix}@example.com`);
+
+    const resend = await app.inject({ method: "POST", url: "/auth/signup/resend-otp", payload: { pendingSignupId } });
+    expect(resend.statusCode).toBe(202);
+    const secondOtp = await getLatestOtpFor(`resend-${suffix}@example.com`);
+    expect(secondOtp).not.toBe(firstOtp);
+
+    const withOldCode = await app.inject({
+      method: "POST",
+      url: "/auth/signup/verify",
+      payload: { pendingSignupId, code: firstOtp },
+    });
+    expect(withOldCode.statusCode).toBe(401);
+
+    const withNewCode = await app.inject({
+      method: "POST",
+      url: "/auth/signup/verify",
+      payload: { pendingSignupId, code: secondOtp },
+    });
+    expect(withNewCode.statusCode).toBe(201);
+  });
+
+  it("rejects signup with an email that's already a completed account", async () => {
     const response = await app.inject({
       method: "POST",
       url: "/auth/signup",
-      payload: { email, password, organizationName: `Dup Org ${suffix}` },
+      payload: { email: `otp-${suffix}@example.com`, password, organizationName: `Dup Org ${suffix}` },
     });
 
     expect(response.statusCode).toBe(409);
@@ -84,12 +198,12 @@ describe("auth routes", () => {
     const response = await app.inject({
       method: "POST",
       url: "/auth/login",
-      payload: { email, password },
+      payload: { email: `otp-${suffix}@example.com`, password },
     });
 
     expect(response.statusCode).toBe(200);
     const body = response.json();
-    expect(body.user.email).toBe(email);
+    expect(body.user.email).toBe(`otp-${suffix}@example.com`);
     expect(body.organizations).toHaveLength(1);
   });
 
@@ -97,7 +211,7 @@ describe("auth routes", () => {
     const wrongPassword = await app.inject({
       method: "POST",
       url: "/auth/login",
-      payload: { email, password: "wrong-password-entirely" },
+      payload: { email: `otp-${suffix}@example.com`, password: "wrong-password-entirely" },
     });
     const unknownEmail = await app.inject({
       method: "POST",
@@ -111,7 +225,11 @@ describe("auth routes", () => {
   });
 
   it("returns the current user and organizations from /auth/me when authenticated", async () => {
-    const login = await app.inject({ method: "POST", url: "/auth/login", payload: { email, password } });
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email: `otp-${suffix}@example.com`, password },
+    });
     const sessionCookie = login.cookies.find((c) => c.name === SESSION_COOKIE_NAME);
 
     const response = await app.inject({
@@ -122,7 +240,7 @@ describe("auth routes", () => {
 
     expect(response.statusCode).toBe(200);
     const body = response.json();
-    expect(body.user.email).toBe(email);
+    expect(body.user.email).toBe(`otp-${suffix}@example.com`);
     expect(body.organizations).toHaveLength(1);
   });
 
@@ -133,7 +251,11 @@ describe("auth routes", () => {
   });
 
   it("logs out, revoking the session so it can no longer be used", async () => {
-    const login = await app.inject({ method: "POST", url: "/auth/login", payload: { email, password } });
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email: `otp-${suffix}@example.com`, password },
+    });
     const sessionCookie = login.cookies.find((c) => c.name === SESSION_COOKIE_NAME);
 
     const logout = await app.inject({
