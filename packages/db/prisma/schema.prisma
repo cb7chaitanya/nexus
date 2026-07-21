@@ -26,6 +26,10 @@ model User {
   id            String   @id @default(uuid())
   email         String   @unique
   passwordHash  String?
+  // Set for accounts created (or later linked) via "Sign in with Google" —
+  // null for password-only accounts. Google's own stable per-user
+  // identifier (the ID token's `sub` claim), not this app's own id.
+  googleId      String?  @unique
   name          String?
   emailVerified Boolean  @default(false)
   createdAt     DateTime @default(now())
