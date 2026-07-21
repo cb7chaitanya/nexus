@@ -12,11 +12,16 @@ name: raas-prod
 # allowed to start. See requirement 4 / docs/deployment.md — there is no
 # manual migration step.
 #
-# Unlike docker-compose.yml (local dev), postgres/redis/object-storage
-# ports are NOT published to the host: only api and web are reachable from
-# outside the compose network. Put a reverse proxy / TLS terminator in
-# front of api and web for real internet-facing traffic — this file is
-# infrastructure for the application tier, not an edge/ingress layer.
+# Unlike docker-compose.yml (local dev), postgres/redis ports are NOT
+# published to the host: only api and web are reachable from outside the
+# compose network. Put a reverse proxy / TLS terminator in front of api
+# and web for real internet-facing traffic — this file is infrastructure
+# for the application tier, not an edge/ingress layer.
+#
+# Object storage is NOT bundled here (no self-hosted MinIO service) —
+# S3_ENDPOINT/S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY must point at a real
+# S3-compatible provider (S3, R2, etc.) already provisioned out of band.
+# See DEPLOYMENT.md.
 
 services:
   # Every image below is pinned to tag@digest, not a bare tag — "pg16",
@@ -26,11 +31,11 @@ services:
   # running underneath an unchanged compose file. The digests here are
   # exactly what this stack has been built and tested against throughout
   # this repo's own development (Postgres 16.14 + pgvector 0.8.5, Redis
-  # 7.4.9, MinIO RELEASE.2025-09-07T16-13-09Z) — verified via `docker
-  # image inspect --format '{{json .RepoDigests}}'` against the actually-
-  # running local containers, not copied from a registry page. Bump
-  # deliberately (pull the new tag, re-inspect, update both the tag and
-  # the digest here) rather than silently.
+  # 7.4.9) — verified via `docker image inspect --format
+  # '{{json .RepoDigests}}'` against the actually-running local
+  # containers, not copied from a registry page. Bump deliberately (pull
+  # the new tag, re-inspect, update both the tag and the digest here)
+  # rather than silently.
   postgres:
     image: pgvector/pgvector:pg16@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
     restart: unless-stopped
@@ -80,26 +85,6 @@ services:
       timeout: 5s
       retries: 10
 
-  object-storage:
-    # Self-hosted, S3-compatible object storage — swap for a managed
-    # S3/R2 bucket in a real deployment by deleting this service and
-    # pointing S3_ENDPOINT/S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY at it
-    # instead; no application code change either way (see
-    # apps/api/src/lib/storage.ts).
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
-    restart: unless-stopped
-    environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is required}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY is required}
-    command: ["server", "/data", "--console-address", ":9001"]
-    volumes:
-      - raas_object_storage_data:/data
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
   # One-shot: applies any pending Prisma migrations, then exits. api and
   # worker both wait on this completing successfully before they start —
   # see the top-of-file comment. Reuses the api image (it already contains
@@ -131,6 +116,13 @@ services:
     # multiple containers can't all bind the same host port. That failure
     # is deliberate here rather than silently picking one replica's port —
     # see DEPLOYMENT.md's "Database connection pool and timeouts" section.
+    #
+    # Published directly here for local rehearsal / no-reverse-proxy-yet
+    # deployments (see the caddy service below). Once a real domain is
+    # live behind caddy, remove this ports: block entirely — see
+    # DEPLOYMENT.md's "HTTPS / reverse proxy" section for the exact
+    # activation steps; internal services should only be reachable
+    # through caddy at that point, not directly on their own ports.
     ports:
       - "${API_PORT:-4000}:${API_PORT:-4000}"
     deploy:
@@ -157,7 +149,7 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       SESSION_JWT_SECRET: ${SESSION_JWT_SECRET:?SESSION_JWT_SECRET is required}
       SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-604800}
-      S3_ENDPOINT: ${S3_ENDPOINT:-http://object-storage:9000}
+      S3_ENDPOINT: ${S3_ENDPOINT:?S3_ENDPOINT is required — see DEPLOYMENT.md}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET: ${S3_BUCKET:?S3_BUCKET is required}
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is required}
@@ -215,8 +207,6 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
-      object-storage:
-        condition: service_healthy
 
   worker:
     build:
@@ -242,7 +232,7 @@ services:
       # full formula and worked examples at higher replica counts.
       APP_DATABASE_URL: postgresql://raas_app:${POSTGRES_APP_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public&connection_limit=${WORKER_DB_CONNECTION_LIMIT:-15}&pool_timeout=${WORKER_DB_POOL_TIMEOUT_SECONDS:-20}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
-      S3_ENDPOINT: ${S3_ENDPOINT:-http://object-storage:9000}
+      S3_ENDPOINT: ${S3_ENDPOINT:?S3_ENDPOINT is required — see DEPLOYMENT.md}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET: ${S3_BUCKET:?S3_BUCKET is required}
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is required}
@@ -321,14 +311,14 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
-      object-storage:
-        condition: service_healthy
 
   web:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
     restart: unless-stopped
+    # Same "remove once caddy is live behind a real domain" note as api's
+    # own ports: block above.
     ports:
       - "${WEB_PORT:-3000}:3000"
     environment:
@@ -336,7 +326,42 @@ services:
     depends_on:
       - api
 
+  # Reverse proxy / TLS terminator — see infra/caddy/Caddyfile and
+  # DEPLOYMENT.md's "HTTPS / reverse proxy" section. Behind the "proxy"
+  # profile (see `profiles:` below), so a plain `docker compose up -d`
+  # never starts it — start it explicitly once APP_DOMAIN/API_DOMAIN are
+  # real: `docker compose --profile proxy up -d`.
+  #
+  # APP_DOMAIN/API_DOMAIN deliberately do NOT use a `:?required` guard,
+  # unlike every real secret in this file — Compose evaluates every
+  # service's variable interpolation up front regardless of which
+  # profiles are active (verified directly: a `:?` guard here made even a
+  # profile-less `docker compose config` fail), so a hard requirement
+  # would block running the rest of this stack at all while no domain is
+  # configured yet. Defaults to the IANA-reserved `.invalid` TLD
+  # (RFC 2606) instead — guaranteed to never resolve to anything real, so
+  # starting caddy without setting real values fails fast and obviously
+  # at the ACME challenge instead of silently doing something wrong.
+  caddy:
+    image: caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+    restart: unless-stopped
+    profiles: ["proxy"]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:-app.example.invalid}
+      API_DOMAIN: ${API_DOMAIN:-api.example.invalid}
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+      - web
+
 volumes:
   raas_postgres_data:
   raas_redis_data:
-  raas_object_storage_data:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,24 @@
+# Production reverse proxy / TLS terminator for docker-compose.prod.yml.
+#
+# {$APP_DOMAIN} / {$API_DOMAIN} come from the caddy service's environment
+# (docker-compose.prod.yml, sourced from .env.prod) — never hardcoded
+# here, same "no environment-specific value in a checked-in file"
+# discipline the rest of this repo's deployment config follows.
+#
+# HTTPS + HTTP->HTTPS redirect: automatic. Caddy provisions a real
+# Let's Encrypt certificate for any site block whose address is a domain
+# name (not a bare port), and automatically serves an HTTP->HTTPS
+# redirect on :80 for it — no extra directives needed for either. This
+# ONLY works once APP_DOMAIN/API_DOMAIN are real, DNS-resolving domains
+# pointing at this host's real public IP and reachable on 80/443 from the
+# internet (required for the ACME HTTP-01 challenge) — see DEPLOYMENT.md's
+# "HTTPS / reverse proxy" section for the activation steps. Until then,
+# this file is valid, syntax-checked config that isn't live yet.
+
+{$APP_DOMAIN} {
+	reverse_proxy web:3000
+}
+
+{$API_DOMAIN} {
+	reverse_proxy api:4000
+}
