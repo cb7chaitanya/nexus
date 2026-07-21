@@ -167,6 +167,12 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       LLM_PROVIDER: ${LLM_PROVIDER:-openai}
       OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4o-mini}
+      # Only load-bearing when LLM_PROVIDER=groq — see apps/api/src/env.ts
+      # and lib/llm-provider.ts (OpenAIChatProvider reused against Groq's
+      # own OpenAI-compatible endpoint; Groq has no embeddings API, so
+      # this never applies to EMBEDDING_PROVIDER).
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_CHAT_MODEL: ${GROQ_CHAT_MODEL:-llama-3.3-70b-versatile}
       RATE_LIMIT_AUTH_MAX: ${RATE_LIMIT_AUTH_MAX:-10}
       RATE_LIMIT_AUTH_WINDOW_SECONDS: ${RATE_LIMIT_AUTH_WINDOW_SECONDS:-60}
       RATE_LIMIT_CHAT_ORG_RPM: ${RATE_LIMIT_CHAT_ORG_RPM:-30}
