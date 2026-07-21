@@ -20,5 +20,4 @@
 .env.*.local
 
 docs
-infra
 *.md
