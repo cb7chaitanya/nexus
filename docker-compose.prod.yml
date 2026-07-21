@@ -262,6 +262,14 @@ services:
       # worst-case concurrent memory use — size both together against
       # this container's real memory limit.
       WORKER_MAX_DOCUMENT_BYTES: ${WORKER_MAX_DOCUMENT_BYTES:-209715200}
+      # Runtime RSS-based backpressure — the other half of the memory
+      # budget above, for when a parse's actual peak memory use exceeds
+      # the static concurrency x per-document-size estimate. See
+      # apps/worker/src/lib/memory-backpressure.ts and env.ts's own
+      # comments; size WORKER_MEMORY_RSS_LIMIT_BYTES against this
+      # container's real memory limit alongside WORKER_MAX_DOCUMENT_BYTES.
+      WORKER_MEMORY_RSS_LIMIT_BYTES: ${WORKER_MEMORY_RSS_LIMIT_BYTES:-1610612736}
+      WORKER_MEMORY_BACKPRESSURE_DELAY_MS: ${WORKER_MEMORY_BACKPRESSURE_DELAY_MS:-5000}
       # Per-queue concurrency — see apps/worker/src/env.ts for the
       # per-queue reasoning (processing cheap/high, extraction
       # memory-bound, embedding/kb-cleanup I/O-bound, sweep serialized).

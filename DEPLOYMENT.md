@@ -42,6 +42,7 @@ guards) — there is no way to silently deploy with a blank secret.
 | `RATE_LIMIT_*`, `CHAT_HISTORY_MESSAGE_LIMIT`, `KB_DELETION_ASYNC_CHUNK_THRESHOLD` | no | api | Platform-wide defaults; per-organization overrides live in the `OrganizationUsageLimit` table, not in env. |
 | `OPENAI_EMBEDDING_BATCH_SIZE`, `WORKER_LOCK_DURATION_MS`, `WORKER_STALLED_INTERVAL_MS`, `STUCK_DOCUMENT_THRESHOLD_MS`, `STUCK_DOCUMENT_SWEEP_INTERVAL_MS`, `STUCK_DOCUMENT_AUTO_RETRY`, `STUCK_DOCUMENT_MAX_AUTO_RETRIES` | no | worker | Tuning knobs; defaults are fine for most deployments. |
 | `WORKER_MAX_DOCUMENT_BYTES` | no (`209715200` = 200 MiB) | worker | Per-document in-memory guardrail during extraction. Multiplied by `WORKER_EXTRACTION_CONCURRENCY` for this worker's worst-case concurrent memory use — size both against the container's real memory limit. |
+| `WORKER_MEMORY_RSS_LIMIT_BYTES`, `WORKER_MEMORY_BACKPRESSURE_DELAY_MS` | no (`1610612736` = 1.5 GiB / `5000`) | worker | Runtime RSS-based backpressure — the other half of the memory budget above, for when a parse's actual peak memory use exceeds the static concurrency × per-document-size estimate. At or above the RSS limit, the extraction worker rate-limits itself (via BullMQ's `queue.rateLimit` + `RateLimitError`, not a failed attempt) for the delay, freeing its concurrency slot without touching the document's retry budget. See `apps/worker/src/lib/memory-backpressure.ts`. |
 | `WORKER_PROCESSING_CONCURRENCY`, `WORKER_EXTRACTION_CONCURRENCY`, `WORKER_EMBEDDING_CONCURRENCY`, `WORKER_SWEEP_CONCURRENCY`, `WORKER_KB_CLEANUP_CONCURRENCY`, `WORKER_DOCUMENT_CLEANUP_CONCURRENCY` | no (`10`/`4`/`2`/`1`/`2`/`10`) | worker | Per-queue BullMQ concurrency. `WORKER_DOCUMENT_CLEANUP_CONCURRENCY` governs DELETE /documents/:id's retry-safe S3 cleanup fallback — see [OBSERVABILITY.md](./OBSERVABILITY.md) and `apps/worker/src/processors/cleanup-document-storage.ts`. |
 | `WORKER_MAX_JOB_DURATION_MS` | no (`600000` = 10 min) | worker | Outermost per-job-attempt wall-clock ceiling. |
 | `WORKER_SHUTDOWN_TIMEOUT_MS` | no (`25000`) | worker | How long SIGTERM/SIGINT waits for active jobs to finish. Must stay below the `worker` service's `stop_grace_period` (`30s`) — see [First staging deployment](#first-staging-deployment). |
@@ -184,7 +185,11 @@ a host that has never run it — steady-state redeploys only need
 - [ ] The host has enough free memory for `WORKER_EXTRACTION_CONCURRENCY
   × WORKER_MAX_DOCUMENT_BYTES` (defaults: `4 × 200 MiB` = 800 MiB worst
   case, on top of Node's own baseline) plus Postgres/Redis/MinIO's own
-  footprint.
+  footprint. `WORKER_MEMORY_RSS_LIMIT_BYTES` (default 1.5 GiB) should sit
+  comfortably above that static worst case but still under the
+  container's actual memory limit — it's the runtime backstop for when a
+  parse's real memory use exceeds the static estimate, not a replacement
+  for sizing the static budget correctly.
 - [ ] If Postgres will be reachable from outside this host for
   administration, confirm `docker-compose.prod.yml` still doesn't publish
   its port (it doesn't, by design — see the top-of-file comment) and that
