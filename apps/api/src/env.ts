@@ -50,6 +50,18 @@ export const env = {
   // to the TTL above; a fresh POST /auth/signup starts over regardless).
   SIGNUP_OTP_TTL_SECONDS: requirePositiveInt("SIGNUP_OTP_TTL_SECONDS", process.env.SIGNUP_OTP_TTL_SECONDS, 600),
   MAX_OTP_ATTEMPTS: requirePositiveInt("MAX_OTP_ATTEMPTS", process.env.MAX_OTP_ATTEMPTS, 5),
+  // "Sign in with Google" — optional, unlike SESSION_JWT_SECRET/etc: the
+  // app is fully usable via password+OTP signup with neither of these
+  // set. GOOGLE_CLIENT_ID being unset is what routes.ts checks to decide
+  // whether to register the /auth/google* routes at all (see
+  // routes/auth.ts) — a half-configured deployment (id but no secret, or
+  // vice versa) fails loudly instead, via requireGoogleOAuthConfig below.
+  GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
+  // Must exactly match an Authorized redirect URI configured on the
+  // Google Cloud OAuth client — defaults to the local-dev API port,
+  // production must override this to its real public API URL.
+  GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI ?? "http://localhost:4000/auth/google/callback",
   S3_ENDPOINT: requireEnv("S3_ENDPOINT"),
   S3_REGION: process.env.S3_REGION ?? "us-east-1",
   S3_BUCKET: requireEnv("S3_BUCKET"),
@@ -146,3 +158,11 @@ export const env = {
   // load-bearing for this process to start and serve traffic.
   SENTRY_DSN: process.env.SENTRY_DSN,
 };
+
+// Half-configured Google OAuth (one of the two set, not both) is almost
+// certainly a mistake — fail loudly at startup rather than silently
+// registering routes that would only fail once someone actually clicks
+// "Continue with Google".
+if (Boolean(env.GOOGLE_CLIENT_ID) !== Boolean(env.GOOGLE_CLIENT_SECRET)) {
+  throw new Error("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must both be set, or both left unset. Refusing to start.");
+}

@@ -6,13 +6,30 @@ import {
   signupSchema,
   verifySignupOtpSchema,
 } from "@raas/shared";
-import { prisma, setTenantContext, withUserContext } from "@raas/db";
+import { prisma, withUserContext } from "@raas/db";
+import { verifyGoogleIdToken } from "@raas/auth";
 import type { FastifyInstance } from "fastify";
 
 import { env } from "../env.js";
-import { clearSessionCookie, setSessionCookie } from "../lib/cookies.js";
+import { createUserWithOrganization } from "../lib/create-account.js";
+import {
+  clearGoogleOAuthCookies,
+  clearSessionCookie,
+  GOOGLE_OAUTH_NEXT_COOKIE,
+  GOOGLE_OAUTH_STATE_COOKIE,
+  GOOGLE_OAUTH_VERIFIER_COOKIE,
+  setGoogleOAuthCookies,
+  setSessionCookie,
+} from "../lib/cookies.js";
 import { buildSignupOtpEmail } from "../lib/email-templates.js";
 import { enqueueTransactionalEmail } from "../lib/email-queue.js";
+import {
+  buildGoogleAuthUrl,
+  codeChallengeFor,
+  exchangeGoogleCode,
+  generateCodeVerifier,
+  generateState,
+} from "../lib/google-oauth.js";
 import { hashOtp } from "../lib/otp.js";
 import { hashPassword, verifyPassword } from "../lib/passwords.js";
 import {
@@ -25,7 +42,6 @@ import {
 import { authRateLimit } from "../lib/rate-limit.js";
 import { toPublicUser } from "../lib/serializers.js";
 import { createSession, destroySession, resolveSession } from "../lib/session.js";
-import { generateUniqueSlug } from "../lib/slugify.js";
 import { requireAuth, SESSION_COOKIE_NAME } from "../plugins/auth-guard.js";
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
@@ -93,23 +109,13 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       throw ApiError.conflict("An account with this email already exists");
     }
 
-    const slug = await generateUniqueSlug(
-      record.organizationSlug ?? record.organizationName,
-      async (candidate) => (await prisma.organization.findUnique({ where: { slug: candidate } })) !== null,
-    );
-
-    const { user, organization } = await prisma.$transaction(async (tx) => {
-      const createdUser = await tx.user.create({
-        data: { email: record.email, passwordHash: record.passwordHash, name: record.name, emailVerified: true },
-      });
-      const createdOrg = await tx.organization.create({
-        data: { name: record.organizationName, slug },
-      });
-      await setTenantContext(tx, createdOrg.id);
-      await tx.organizationMember.create({
-        data: { organizationId: createdOrg.id, userId: createdUser.id, role: "OWNER" },
-      });
-      return { user: createdUser, organization: createdOrg };
+    const { user, organization } = await createUserWithOrganization({
+      email: record.email,
+      passwordHash: record.passwordHash,
+      name: record.name,
+      organizationName: record.organizationName,
+      organizationSlug: record.organizationSlug,
+      emailVerified: true,
     });
 
     await consumePendingSignup(input.pendingSignupId);
@@ -199,4 +205,84 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       organizations: memberships.map((m) => ({ ...m.organization, role: m.role })),
     });
   });
+
+  // "Sign in with Google" is fully optional — see env.ts's comment on
+  // GOOGLE_CLIENT_ID. Not registering these routes at all when it's
+  // unset (rather than registering them and having them fail per-request)
+  // means an unconfigured deployment's frontend simply gets a 404 if it
+  // ever tries to link to /auth/google, not a confusing runtime error.
+  if (env.GOOGLE_CLIENT_ID) {
+    app.get("/auth/google", async (request, reply) => {
+      const state = generateState();
+      const codeVerifier = generateCodeVerifier();
+      // Only ever a same-origin relative path (e.g. "/invites/abc") — never
+      // follow this into an open redirect to an attacker-supplied host.
+      const rawNext = (request.query as { next?: string }).next;
+      const next = rawNext && rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : undefined;
+      setGoogleOAuthCookies(reply, { state, codeVerifier, next });
+      reply.redirect(buildGoogleAuthUrl({ state, codeChallenge: codeChallengeFor(codeVerifier) }));
+    });
+
+    // A top-level browser navigation, not a fetch call — every failure
+    // path redirects back to the web app with an ?error= query param
+    // rather than returning a JSON error envelope, since there's no
+    // frontend code positioned to read one here.
+    app.get("/auth/google/callback", async (request, reply) => {
+      const query = request.query as { code?: string; state?: string; error?: string };
+      const cookieState = request.cookies[GOOGLE_OAUTH_STATE_COOKIE];
+      const cookieVerifier = request.cookies[GOOGLE_OAUTH_VERIFIER_COOKIE];
+      const cookieNext = request.cookies[GOOGLE_OAUTH_NEXT_COOKIE];
+      clearGoogleOAuthCookies(reply);
+
+      const failure = (reason: string) => reply.redirect(`${env.WEB_ORIGIN}/login?error=${reason}`);
+
+      if (query.error || !query.code || !query.state || !cookieState || !cookieVerifier || query.state !== cookieState) {
+        return failure("oauth_failed");
+      }
+
+      let claims;
+      try {
+        const idToken = await exchangeGoogleCode({ code: query.code, codeVerifier: cookieVerifier });
+        claims = await verifyGoogleIdToken(idToken, { clientId: env.GOOGLE_CLIENT_ID! });
+      } catch (err) {
+        request.log.warn({ err }, "Google OAuth code exchange or ID token verification failed");
+        return failure("oauth_failed");
+      }
+
+      // Google itself must vouch for the email, not just report one —
+      // this is the entire trust basis for auto-linking/creating an
+      // account by email below.
+      if (!claims.emailVerified) {
+        return failure("oauth_email_unverified");
+      }
+
+      let user = await prisma.user.findUnique({ where: { googleId: claims.sub } });
+
+      if (!user) {
+        const existingByEmail = await prisma.user.findUnique({ where: { email: claims.email } });
+        if (existingByEmail) {
+          // Link rather than create — same person already has a
+          // password account with this (Google-verified) email.
+          user = await prisma.user.update({
+            where: { id: existingByEmail.id },
+            data: { googleId: claims.sub, emailVerified: true },
+          });
+        } else {
+          const organizationName = claims.name ? `${claims.name}'s Workspace` : `${claims.email.split("@")[0]}'s Workspace`;
+          const created = await createUserWithOrganization({
+            email: claims.email,
+            name: claims.name,
+            organizationName,
+            googleId: claims.sub,
+            emailVerified: true,
+          });
+          user = created.user;
+        }
+      }
+
+      const session = await createSession(user.id);
+      setSessionCookie(reply, session.token);
+      reply.redirect(`${env.WEB_ORIGIN}${cookieNext ?? "/dashboard"}`);
+    });
+  }
 }

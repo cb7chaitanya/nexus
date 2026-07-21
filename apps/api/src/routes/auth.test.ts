@@ -279,4 +279,14 @@ describe("auth routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ success: true });
   });
+
+  it("does not register the Google OAuth routes when GOOGLE_CLIENT_ID is unset", async () => {
+    // This suite's env (see root .env) leaves GOOGLE_CLIENT_ID unset —
+    // real coverage of the configured path needs a real Google OAuth
+    // client (see google-oauth.test.ts for the pure PKCE/state helpers).
+    const start = await app.inject({ method: "GET", url: "/auth/google" });
+    expect(start.statusCode).toBe(404);
+    const callback = await app.inject({ method: "GET", url: "/auth/google/callback" });
+    expect(callback.statusCode).toBe(404);
+  });
 });
