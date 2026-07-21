@@ -1,7 +1,9 @@
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
 
 import { cn } from "@/lib/utils";
+import { CodeBlock } from "@/components/chat/code-block";
 
 const components: Components = {
   p: ({ className, ...props }) => <p className={cn("mb-3 last:mb-0 leading-relaxed", className)} {...props} />,
@@ -36,21 +38,16 @@ const components: Components = {
       {...props}
     />
   ),
+  // Inline `code` only — fenced blocks render as <pre><code> and are
+  // handled entirely by the `pre` override (CodeBlock) below, so this
+  // never double-styles a highlighted block's own <code>.
   code: ({ className, ...props }) => (
     <code
       className={cn("rounded bg-black/[0.06] px-1 py-0.5 font-mono text-[0.85em] dark:bg-white/10", className)}
       {...props}
     />
   ),
-  pre: ({ className, ...props }) => (
-    <pre
-      className={cn(
-        "mb-3 overflow-x-auto rounded-lg bg-black/[0.06] p-3 font-mono text-[0.85em] last:mb-0 dark:bg-white/10 [&_code]:bg-transparent [&_code]:p-0",
-        className,
-      )}
-      {...props}
-    />
-  ),
+  pre: CodeBlock,
   table: ({ className, ...props }) => (
     <div className="mb-3 overflow-x-auto last:mb-0">
       <table className={cn("w-full border-collapse text-sm", className)} {...props} />
@@ -65,7 +62,7 @@ const components: Components = {
 export function MarkdownContent({ content }: { content: string }) {
   return (
     <div className="text-sm">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={components}>
         {content}
       </ReactMarkdown>
     </div>

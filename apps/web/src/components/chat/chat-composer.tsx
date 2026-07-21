@@ -1,9 +1,13 @@
 "use client";
 
-import { useRef, type KeyboardEvent } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 import { ArrowUpIcon, SquareIcon } from "lucide-react";
 
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+
+const MAX_LENGTH = 4000;
+const WARN_THRESHOLD = MAX_LENGTH * 0.9;
 
 export function ChatComposer({
   onSend,
@@ -17,6 +21,7 @@ export function ChatComposer({
   disabled?: boolean;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [length, setLength] = useState(0);
 
   function submit() {
     const value = textareaRef.current?.value ?? "";
@@ -26,6 +31,7 @@ export function ChatComposer({
       textareaRef.current.value = "";
       textareaRef.current.style.height = "auto";
     }
+    setLength(0);
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -40,11 +46,12 @@ export function ChatComposer({
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+    setLength(el.value.length);
   }
 
   return (
     <div className="border-t border-border bg-background p-4">
-      <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-xl border border-input bg-card px-3 py-2 shadow-sm focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30">
+      <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-xl border border-input bg-card px-3 py-2 shadow-xs transition-shadow focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30">
         <textarea
           ref={textareaRef}
           rows={1}
@@ -52,7 +59,7 @@ export function ChatComposer({
           disabled={disabled}
           onKeyDown={handleKeyDown}
           onInput={handleInput}
-          maxLength={4000}
+          maxLength={MAX_LENGTH}
           className="max-h-[200px] flex-1 resize-none bg-transparent py-1.5 text-sm outline-none placeholder:text-muted-foreground disabled:opacity-50"
         />
         {isStreaming ? (
@@ -65,7 +72,18 @@ export function ChatComposer({
           </Button>
         )}
       </div>
-      <p className="mx-auto mt-2 max-w-3xl text-center text-xs text-muted-foreground">
+      <div className="mx-auto mt-2 flex max-w-3xl items-center justify-center gap-3 text-xs text-muted-foreground">
+        <p className="text-center">
+          <kbd className="rounded border border-border px-1 py-0.5 font-mono text-[10px]">↵</kbd> to send ·{" "}
+          <kbd className="rounded border border-border px-1 py-0.5 font-mono text-[10px]">⇧↵</kbd> for a new line
+        </p>
+        {length >= WARN_THRESHOLD && (
+          <span className={cn(length >= MAX_LENGTH && "text-destructive")}>
+            {length}/{MAX_LENGTH}
+          </span>
+        )}
+      </div>
+      <p className="mx-auto mt-1.5 max-w-3xl text-center text-xs text-muted-foreground">
         Answers may be incomplete or inaccurate — always verify against the cited sources.
       </p>
     </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { CheckIcon, CopyIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, RotateCwIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { MarkdownContent } from "@/components/chat/markdown-content";
@@ -10,7 +10,17 @@ import { TypingIndicator } from "@/components/chat/typing-indicator";
 import { Button } from "@/components/ui/button";
 import type { DisplayMessage } from "@/hooks/use-chat";
 
-export function MessageBubble({ message }: { message: DisplayMessage }) {
+export function MessageBubble({
+  message,
+  fileNames,
+  isLast = false,
+  onRegenerate,
+}: {
+  message: DisplayMessage;
+  fileNames?: Record<string, string>;
+  isLast?: boolean;
+  onRegenerate?: () => void;
+}) {
   const [copied, setCopied] = useState(false);
   const isUser = message.role === "USER";
 
@@ -31,6 +41,7 @@ export function MessageBubble({ message }: { message: DisplayMessage }) {
   }
 
   const showTyping = message.pending && message.content.length === 0;
+  const isStreamingText = message.pending && message.content.length > 0;
 
   return (
     <div className="group flex justify-start">
@@ -39,8 +50,13 @@ export function MessageBubble({ message }: { message: DisplayMessage }) {
           <TypingIndicator />
         ) : (
           <>
-            <MarkdownContent content={message.content} />
-            <CitationList citations={message.citations} />
+            <div className="relative">
+              <MarkdownContent content={message.content} />
+              {isStreamingText && (
+                <span className="animate-caret-blink ml-0.5 inline-block h-3.5 w-[2px] translate-y-0.5 bg-current align-middle" />
+              )}
+            </div>
+            <CitationList citations={message.citations} fileNames={fileNames} />
           </>
         )}
         {!message.pending && message.content.length > 0 && (
@@ -48,6 +64,11 @@ export function MessageBubble({ message }: { message: DisplayMessage }) {
             <Button variant="ghost" size="icon-sm" className="size-6" onClick={handleCopy}>
               {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
             </Button>
+            {isLast && onRegenerate && (
+              <Button variant="ghost" size="icon-sm" className="size-6" onClick={onRegenerate} title="Regenerate">
+                <RotateCwIcon className="size-3.5" />
+              </Button>
+            )}
           </div>
         )}
       </div>

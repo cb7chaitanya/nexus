@@ -3,6 +3,8 @@
 import { motion } from "framer-motion";
 import { MessageCircleIcon, SparklesIcon } from "lucide-react";
 
+import { SubTitle } from "@/components/ui/typography";
+
 const suggestions = [
   "Summarize the key points across these documents",
   "What are the most important dates or deadlines mentioned?",
@@ -26,22 +28,31 @@ export function ChatEmptyState({
         <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-accent text-accent-foreground">
           <MessageCircleIcon className="size-5" />
         </div>
-        <h2 className="mt-4 text-lg font-semibold">Ask {knowledgeBaseName} anything</h2>
+        <SubTitle className="mt-4">Ask {knowledgeBaseName} anything</SubTitle>
         <p className="mx-auto mt-1.5 max-w-sm text-sm text-muted-foreground">
           Answers are grounded in your documents and always include their sources.
         </p>
-        <div className="mx-auto mt-6 flex max-w-md flex-col gap-2">
+        <motion.div
+          className="mx-auto mt-6 flex max-w-md flex-col gap-2"
+          initial="hidden"
+          animate="show"
+          variants={{ show: { transition: { staggerChildren: 0.06, delayChildren: 0.15 } } }}
+        >
           {suggestions.map((suggestion) => (
-            <button
+            <motion.button
               key={suggestion}
+              variants={{
+                hidden: { opacity: 0, y: 6 },
+                show: { opacity: 1, y: 0 },
+              }}
               onClick={() => onSuggestionClick(suggestion)}
-              className="flex items-center gap-2 rounded-lg border border-border bg-card px-3.5 py-2.5 text-left text-sm transition-colors hover:border-primary/40 hover:bg-accent/40"
+              className="flex items-center gap-2 rounded-lg border border-border bg-card px-3.5 py-2.5 text-left text-sm shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:bg-accent/40 hover:shadow-sm"
             >
               <SparklesIcon className="size-3.5 shrink-0 text-muted-foreground" />
               {suggestion}
-            </button>
+            </motion.button>
           ))}
-        </div>
+        </motion.div>
       </motion.div>
     </div>
   );
