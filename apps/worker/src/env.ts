@@ -45,6 +45,33 @@ export const env = {
   // that var's own comment) stays well under a typical small-to-medium
   // worker container's memory budget.
   WORKER_MAX_DOCUMENT_BYTES: requirePositiveInt("WORKER_MAX_DOCUMENT_BYTES", process.env.WORKER_MAX_DOCUMENT_BYTES, 200 * 1024 * 1024),
+  // The runtime half of that same memory budget (see
+  // lib/memory-backpressure.ts) — WORKER_MAX_DOCUMENT_BYTES x
+  // WORKER_EXTRACTION_CONCURRENCY is a worst-case STATIC estimate that
+  // assumes a PDF parse's peak working set is close to the input buffer's
+  // size; this is the runtime backstop for when it isn't (pdf-parse can
+  // transiently use several times the buffer size while parsing). Checked
+  // against process.memoryUsage().rss immediately before each extraction
+  // job starts — at or above this, the job is rate-limited back onto the
+  // queue (not failed, not retried against the document's own retry
+  // budget) until RSS has had a chance to come back down. Default (1.5
+  // GiB) assumes a container with roughly 2 GiB available: comfortably
+  // above the default 800 MiB static budget (200 MiB x 4), leaving
+  // headroom for Node/dependency baseline RSS plus a genuine multi-job
+  // parsing spike, while still catching runaway growth before the OS OOM
+  // killer would. Size against this deployment's real container memory
+  // limit, same discipline as WORKER_MAX_DOCUMENT_BYTES above.
+  WORKER_MEMORY_RSS_LIMIT_BYTES: requirePositiveInt("WORKER_MEMORY_RSS_LIMIT_BYTES", process.env.WORKER_MEMORY_RSS_LIMIT_BYTES, Math.floor(1.5 * 1024 * 1024 * 1024)),
+  // How long a memory-backpressured extraction worker stops pulling new
+  // extraction jobs for once triggered (see lib/memory-backpressure.ts).
+  // Short enough that a transient spike doesn't stall real ingestion
+  // work for long, long enough to give Node's GC a real chance to
+  // reclaim the memory a just-finished parse held onto.
+  WORKER_MEMORY_BACKPRESSURE_DELAY_MS: requirePositiveInt(
+    "WORKER_MEMORY_BACKPRESSURE_DELAY_MS",
+    process.env.WORKER_MEMORY_BACKPRESSURE_DELAY_MS,
+    5000,
+  ),
   // "fake" is a real, documented provider choice (see
   // @raas/providers/FakeEmbeddingProvider) for local dev without an OpenAI
   // key and for tests — deterministic, offline, no cost. Defaults to

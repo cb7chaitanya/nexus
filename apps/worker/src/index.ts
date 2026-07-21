@@ -18,6 +18,7 @@ import { recordJobSuccess } from "./lib/health-state.js";
 import { handleJobFailure } from "./lib/job-failure-alerts.js";
 import { withJobTimeout } from "./lib/job-timeout.js";
 import { createJobLogger } from "./lib/job-logger.js";
+import { backOffIfMemoryConstrained } from "./lib/memory-backpressure.js";
 import { createNotifier } from "./lib/notifications/index.js";
 import { redisConnection } from "./lib/redis.js";
 import { initSentry } from "./lib/sentry.js";
@@ -87,10 +88,23 @@ async function main(): Promise<void> {
     ...sharedWorkerOptions,
     concurrency: env.WORKER_PROCESSING_CONCURRENCY,
   });
+  // Own Queue handle constructed up front (rather than down with the
+  // other standalone Queues below) because the extraction processor
+  // itself needs it: backOffIfMemoryConstrained sets this queue's
+  // rate-limiter key, which is how a memory-backpressured job actually
+  // gets delayed rather than immediately re-picked-up (see
+  // lib/memory-backpressure.ts's own doc comment). Reused, not
+  // duplicated, by the standalone-Queue list further down.
+  const documentExtractionQueue = new Queue(QUEUE_NAMES.extraction, { connection: redisConnection });
   const extractionWorker = new Worker(
     QUEUE_NAMES.extraction,
     withJobTimeout(async (job: Job<DocumentJobData>) => {
       if (job.name === JOB_NAMES.extractText) {
+        // Only the extract-text stage buffers a whole document into
+        // memory (chunk-text works off already-persisted chunks) — see
+        // WORKER_MEMORY_RSS_LIMIT_BYTES's own comment for why this check
+        // exists alongside the static per-document/concurrency budget.
+        await backOffIfMemoryConstrained(documentExtractionQueue, createJobLogger({ jobId: job.id, organizationId: job.data.organizationId, documentId: job.data.documentId }));
         return extractTextProcessor(job);
       }
       return chunkTextProcessor(job);
@@ -166,19 +180,20 @@ async function main(): Promise<void> {
 
   const workers = [processingWorker, extractionWorker, embeddingWorker, sweepWorker, kbCleanupWorker, documentCleanupWorker];
 
-  // Standalone Queue handles for processing/extraction/kb-cleanup/
-  // document-cleanup — distinct from the Worker objects above (a BullMQ
-  // Worker is a consumer, it doesn't expose getJobCounts()/introspection
-  // the way a Queue does). document-embedding and document-sweep already
-  // have their own Queue instances (documentEmbeddingQueue, above —
-  // needed by processors/chunk-text.ts's own fan-out; documentSweepQueue,
-  // needed to schedule the repeatable sweep job), so only these four are
-  // new here. Exist for two things: queue-depth/active-jobs metrics
-  // below, and widening the health check (below) and graceful-shutdown
-  // queue list (see the shutdown() closure further down) to cover all
-  // six queues instead of two.
+  // Standalone Queue handles for processing/kb-cleanup/document-cleanup —
+  // distinct from the Worker objects above (a BullMQ Worker is a
+  // consumer, it doesn't expose getJobCounts()/introspection the way a
+  // Queue does). document-embedding and document-sweep already have
+  // their own Queue instances (documentEmbeddingQueue, above — needed by
+  // processors/chunk-text.ts's own fan-out; documentSweepQueue, needed to
+  // schedule the repeatable sweep job), and document-extraction's is
+  // already constructed above (documentExtractionQueue — the memory
+  // backpressure guard needs it), so only these three are new here.
+  // Exist for two things: queue-depth/active-jobs metrics below, and
+  // widening the health check (below) and graceful-shutdown queue list
+  // (see the shutdown() closure further down) to cover all six queues
+  // instead of two.
   const documentProcessingQueue = new Queue(QUEUE_NAMES.processing, { connection: redisConnection });
-  const documentExtractionQueue = new Queue(QUEUE_NAMES.extraction, { connection: redisConnection });
   const kbCleanupQueue = new Queue(QUEUE_NAMES.kbCleanup, { connection: redisConnection });
   const documentCleanupQueue = new Queue(QUEUE_NAMES.documentCleanup, { connection: redisConnection });
   const allQueues = [
@@ -337,6 +352,8 @@ async function main(): Promise<void> {
       maxJobDurationMs: env.WORKER_MAX_JOB_DURATION_MS,
       shutdownTimeoutMs: env.WORKER_SHUTDOWN_TIMEOUT_MS,
       maxDocumentBytes: env.WORKER_MAX_DOCUMENT_BYTES,
+      memoryRssLimitBytes: env.WORKER_MEMORY_RSS_LIMIT_BYTES,
+      memoryBackpressureDelayMs: env.WORKER_MEMORY_BACKPRESSURE_DELAY_MS,
       lockDurationMs: env.WORKER_LOCK_DURATION_MS,
       stalledIntervalMs: env.WORKER_STALLED_INTERVAL_MS,
       sweepIntervalMs: env.STUCK_DOCUMENT_SWEEP_INTERVAL_MS,

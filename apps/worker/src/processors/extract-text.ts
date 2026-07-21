@@ -50,8 +50,11 @@ export async function extractTextProcessor(job: Job<DocumentJobData>): Promise<E
     // extractPdfText taking a transport instead of a Buffer — a real
     // change to this processor's I/O contract, not a config change. Bounded
     // concurrency (WORKER_EXTRACTION_CONCURRENCY) x a bounded per-document
-    // size is the in-scope mitigation for now; see this var's own comment
-    // for the worst-case-memory formula that follows from it.
+    // size is the static half of the in-scope mitigation; see this var's
+    // own comment for the worst-case-memory formula that follows from it.
+    // The runtime half — actual RSS-based backpressure for when a parse's
+    // real memory use exceeds that static assumption — lives in index.ts's
+    // wiring of lib/memory-backpressure.ts, not here.
     if (document.sizeBytes > env.WORKER_MAX_DOCUMENT_BYTES) {
       throw new DocumentValidationError(
         `Document is ${document.sizeBytes} bytes, exceeding this worker's configured processing limit of ${env.WORKER_MAX_DOCUMENT_BYTES} bytes`,
