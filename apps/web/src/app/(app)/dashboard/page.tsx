@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { motion } from "framer-motion";
 import {
   ArrowRightIcon,
   DatabaseIcon,
@@ -11,11 +12,12 @@ import {
 } from "lucide-react";
 
 import { useSession } from "@/lib/session-context";
-import { useKnowledgeBases } from "@/hooks/use-knowledge-bases";
+import { useKnowledgeBase, useKnowledgeBases } from "@/hooks/use-knowledge-bases";
 import { useConversations } from "@/hooks/use-conversations";
 import { useUsage } from "@/hooks/use-usage";
 import { PageHeader } from "@/components/layout/page-header";
 import { StatCard } from "@/components/dashboard/stat-card";
+import { GettingStartedChecklist } from "@/components/dashboard/getting-started-checklist";
 import { KnowledgeBaseCard } from "@/components/kb/knowledge-base-card";
 import { CreateKnowledgeBaseDialog } from "@/components/kb/create-knowledge-base-dialog";
 import { ConversationListItem } from "@/components/chat/conversation-list-item";
@@ -23,6 +25,15 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+
+const gridVariants = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.05 } },
+};
+const cardVariants = {
+  hidden: { opacity: 0, y: 10 },
+  show: { opacity: 1, y: 0 },
+};
 
 export default function DashboardPage() {
   const { user, currentOrganization } = useSession();
@@ -35,6 +46,9 @@ export default function DashboardPage() {
   const firstName = user.name?.split(" ")[0] ?? user.email.split("@")[0];
   const kbs = knowledgeBases.data?.data ?? [];
   const recentConversations = conversations.data?.data.slice(0, 5) ?? [];
+
+  const firstKb = useKnowledgeBase(kbs[0]?.id ?? "", currentOrganization.id);
+  const hasDocument = (firstKb.data?.stats.documentCount ?? 0) > 0;
 
   return (
     <div className="pb-16">
@@ -49,22 +63,38 @@ export default function DashboardPage() {
       />
 
       <div className="space-y-8 px-6 py-6">
+        {!knowledgeBases.isLoading && !conversations.isLoading && (
+          <GettingStartedChecklist
+            organizationId={currentOrganization.id}
+            hasKnowledgeBase={kbs.length > 0}
+            hasDocument={hasDocument}
+            hasConversation={recentConversations.length > 0}
+            createHref="/kb"
+          />
+        )}
+
         <div className="grid gap-4 sm:grid-cols-3">
-          <StatCard
-            label="Knowledge bases"
-            icon={DatabaseIcon}
-            value={knowledgeBases.isLoading ? "—" : String(knowledgeBases.data?.data.length ?? 0)}
-          />
-          <StatCard
-            label="Conversations"
-            icon={MessagesSquareIcon}
-            value={conversations.isLoading ? "—" : String(conversations.data?.data.length ?? 0)}
-          />
-          <StatCard
-            label="Requests (30d)"
-            icon={ZapIcon}
-            value={usage.isLoading ? "—" : String(usage.data?.totals.requestCount ?? 0)}
-          />
+          {knowledgeBases.isLoading || conversations.isLoading || usage.isLoading ? (
+            <>
+              <Skeleton className="h-[74px] rounded-xl" />
+              <Skeleton className="h-[74px] rounded-xl" />
+              <Skeleton className="h-[74px] rounded-xl" />
+            </>
+          ) : (
+            <>
+              <StatCard label="Knowledge bases" icon={DatabaseIcon} value={String(kbs.length)} />
+              <StatCard
+                label="Conversations"
+                icon={MessagesSquareIcon}
+                value={String(conversations.data?.data.length ?? 0)}
+              />
+              <StatCard
+                label="Requests (30d)"
+                icon={ZapIcon}
+                value={String(usage.data?.totals.requestCount ?? 0)}
+              />
+            </>
+          )}
         </div>
 
         <section>
@@ -95,29 +125,42 @@ export default function DashboardPage() {
               }
             />
           ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <motion.div
+              className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
+              initial="hidden"
+              animate="show"
+              variants={gridVariants}
+            >
               {kbs.slice(0, 6).map((kb) => (
-                <KnowledgeBaseCard key={kb.id} kb={kb} />
+                <motion.div key={kb.id} variants={cardVariants}>
+                  <KnowledgeBaseCard kb={kb} />
+                </motion.div>
               ))}
-            </div>
+            </motion.div>
           )}
         </section>
 
         <section>
           <h2 className="mb-4 text-sm font-semibold">Recent conversations</h2>
-          <Card className="py-3">
-            <CardContent>
-              {conversations.isLoading ? (
+          {conversations.isLoading ? (
+            <Card className="py-3">
+              <CardContent>
                 <div className="space-y-2">
                   {Array.from({ length: 3 }).map((_, i) => (
                     <Skeleton key={i} className="h-10 rounded-md" />
                   ))}
                 </div>
-              ) : recentConversations.length === 0 ? (
-                <p className="py-6 text-center text-sm text-muted-foreground">
-                  No conversations yet — start one from a knowledge base.
-                </p>
-              ) : (
+              </CardContent>
+            </Card>
+          ) : recentConversations.length === 0 ? (
+            <EmptyState
+              icon={MessagesSquareIcon}
+              title="No conversations yet"
+              description="Open a knowledge base and ask it a question to start your first conversation."
+            />
+          ) : (
+            <Card className="py-3">
+              <CardContent>
                 <div className="space-y-0.5">
                   {recentConversations.map((conversation) => (
                     <ConversationListItem
@@ -127,9 +170,9 @@ export default function DashboardPage() {
                     />
                   ))}
                 </div>
-              )}
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          )}
         </section>
       </div>
 

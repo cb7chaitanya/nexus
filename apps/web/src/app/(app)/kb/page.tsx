@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import { DatabaseIcon, PlusIcon, SearchIcon } from "lucide-react";
 
 import { useSession } from "@/lib/session-context";
@@ -75,11 +76,18 @@ export default function KnowledgeBasesPage() {
             No knowledge bases match &ldquo;{search}&rdquo;.
           </p>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <motion.div
+            className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
+            initial="hidden"
+            animate="show"
+            variants={{ show: { transition: { staggerChildren: 0.04 } } }}
+          >
             {filtered.map((kb) => (
-              <KnowledgeBaseCard key={kb.id} kb={kb} />
+              <motion.div key={kb.id} variants={{ hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }}>
+                <KnowledgeBaseCard kb={kb} />
+              </motion.div>
             ))}
-          </div>
+          </motion.div>
         )}
       </div>
 
