@@ -1,4 +1,5 @@
 export { isSessionTokenExpired } from "./expiry.js";
+export { verifyGoogleIdToken, type GoogleIdTokenClaims } from "./google.js";
 export {
   signSessionToken,
   verifySessionToken,
