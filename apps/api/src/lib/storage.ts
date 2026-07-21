@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
-import { CreateBucketCommand, DeleteObjectsCommand, HeadBucketCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
+import { CreateBucketCommand, DeleteObjectsCommand, HeadBucketCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 import { env } from "../env.js";
 
@@ -52,39 +52,35 @@ export function buildStorageKey(organizationId: string, knowledgeBaseId: string,
 
 export interface PresignedUpload {
   url: string;
-  fields: Record<string, string>;
   expiresAt: Date;
 }
 
 /**
- * Presigned POST, not a presigned PUT — deliberately: a PUT URL's SigV4
- * query-string signature has no way to bind Content-Length, so nothing
- * stops a client from PUTting arbitrarily more bytes than it declared at
- * presign time (this was the actual gap this function used to leave
- * open). An S3 POST policy's `content-length-range` condition is
- * enforced by the storage backend itself, before the object is ever
- * created — verified empirically against real MinIO (not assumed from
- * docs): an out-of-range POST is rejected with a 400 EntityTooLarge and
- * no object is written at all. Same AWS SDK v3 POST-policy mechanism
- * works against real S3/R2 in staging/prod, only S3_ENDPOINT differs
- * (see env.ts).
+ * Presigned PUT, not presigned POST (this function's original approach,
+ * changed here) — S3's POST-policy mechanism is not implemented by every
+ * S3-compatible provider: verified directly against Cloudflare R2, which
+ * returns `501 NotImplemented` ("Presigned post requests are not yet
+ * implemented") for every presigned-POST upload attempt. Presigned PUT is
+ * universally supported (AWS S3, R2, MinIO).
  *
- * `maxSizeBytes` is the caller-declared sizeBytes from the presign
- * request (see POST /kb/:id/documents/presign), not the platform-wide
- * MAX_UPLOAD_SIZE_BYTES ceiling — binding the range to what THIS caller
- * actually claimed is what closes the "declares a small size, uploads
- * something bigger" gap specifically, not just the platform-wide one
- * (already enforced separately by presignDocumentSchema's own .max()).
+ * Trade-off this reintroduces: a presigned PUT's SigV4 query-string
+ * signature has no way to bind Content-Length the way an S3 POST
+ * policy's `content-length-range` condition could — nothing at the
+ * storage layer stops a client from PUTting more bytes than it declared
+ * at presign time (this was the exact gap the POST-based version existed
+ * to close). The only enforcement left is POST /documents/:id/complete's
+ * post-hoc `getObjectMetadata` size check + `deleteObjects` cleanup —
+ * previously a defense-in-depth backstop behind the POST policy, now the
+ * sole line of defense: an oversized object can land in the bucket
+ * transiently before that check catches and removes it, which the POST
+ * policy prevented outright. Accepted because it's the only presign
+ * mechanism R2 actually supports.
  */
-export async function createPresignedUpload(key: string, contentType: string, maxSizeBytes: number): Promise<PresignedUpload> {
-  const { url, fields } = await createPresignedPost(s3, {
-    Bucket: env.S3_BUCKET,
-    Key: key,
-    Conditions: [["content-length-range", 1, maxSizeBytes]],
-    Fields: { "Content-Type": contentType },
-    Expires: PRESIGN_TTL_SECONDS,
+export async function createPresignedUpload(key: string, contentType: string): Promise<PresignedUpload> {
+  const url = await getSignedUrl(s3, new PutObjectCommand({ Bucket: env.S3_BUCKET, Key: key, ContentType: contentType }), {
+    expiresIn: PRESIGN_TTL_SECONDS,
   });
-  return { url, fields, expiresAt: new Date(Date.now() + PRESIGN_TTL_SECONDS * 1000) };
+  return { url, expiresAt: new Date(Date.now() + PRESIGN_TTL_SECONDS * 1000) };
 }
 
 /**

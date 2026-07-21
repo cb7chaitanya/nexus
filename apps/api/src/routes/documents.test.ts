@@ -39,13 +39,12 @@ async function presignDocument(
   sessionCookie: string,
   organizationId: string,
   knowledgeBaseId: string,
-  // Headroom over every test body below that doesn't pass its own
-  // explicit sizeBytes — content-length-range now enforces this exactly
-  // (see lib/storage.ts's createPresignedUpload), so a too-tight default
-  // here would make unrelated tests fail the upload itself rather than
-  // whatever they're actually testing.
+  // Unlike before, a presigned PUT doesn't enforce sizeBytes at the
+  // storage layer at all (see lib/storage.ts's createPresignedUpload) —
+  // this default just needs to be a plausible declared size, not
+  // headroom over anything.
   sizeBytes = 64,
-): Promise<{ documentId: string; uploadUrl: string; uploadFields: Record<string, string>; storageKey: string }> {
+): Promise<{ documentId: string; uploadUrl: string; storageKey: string }> {
   const response = await app.inject({
     method: "POST",
     url: `/kb/${knowledgeBaseId}/documents/presign`,
@@ -58,29 +57,18 @@ async function presignDocument(
     },
   });
   const body = response.json();
-  return { documentId: body.document.id, uploadUrl: body.uploadUrl, uploadFields: body.uploadFields, storageKey: body.document.storageKey };
+  return { documentId: body.document.id, uploadUrl: body.uploadUrl, storageKey: body.document.storageKey };
 }
 
 /**
- * POST /kb/:id/documents/presign returns a presigned POST (url + fields),
- * not a presigned PUT — see lib/storage.ts's createPresignedUpload for
- * why. A real client (and every test below that does a real upload) must
- * submit a multipart/form-data POST carrying every returned field plus
- * the file itself under a field named "file", exactly as S3's POST
- * policy expects.
+ * POST /kb/:id/documents/presign returns a presigned PUT, not a presigned
+ * POST — see lib/storage.ts's createPresignedUpload for why (R2 doesn't
+ * support presigned POST at all). A real client (and every test below
+ * that does a real upload) PUTs the raw body directly to `uploadUrl` with
+ * a matching Content-Type header — no multipart form, no fields.
  */
-async function uploadToPresignedPost(
-  uploadUrl: string,
-  uploadFields: Record<string, string>,
-  body: string,
-  contentType = "text/plain",
-): Promise<Response> {
-  const form = new FormData();
-  for (const [key, value] of Object.entries(uploadFields)) {
-    form.append(key, value);
-  }
-  form.append("file", new Blob([body], { type: contentType }));
-  return fetch(uploadUrl, { method: "POST", body: form });
+async function uploadToPresignedUrl(uploadUrl: string, body: string, contentType = "text/plain"): Promise<Response> {
+  return fetch(uploadUrl, { method: "PUT", headers: { "Content-Type": contentType }, body });
 }
 
 /**
@@ -179,9 +167,9 @@ describe("document routes", () => {
   });
 
   it("completes a document after the object is actually uploaded, transitioning PENDING_UPLOAD -> QUEUED", async () => {
-    const { documentId, uploadUrl, uploadFields } = await presignDocument(app, ownerCookie, organizationId, knowledgeBaseId);
+    const { documentId, uploadUrl } = await presignDocument(app, ownerCookie, organizationId, knowledgeBaseId);
 
-    const uploadResponse = await uploadToPresignedPost(uploadUrl, uploadFields, "hello world");
+    const uploadResponse = await uploadToPresignedUrl(uploadUrl, "hello world");
     expect(uploadResponse.ok).toBe(true);
 
     const response = await app.inject({
@@ -196,9 +184,9 @@ describe("document routes", () => {
   });
 
   it("rejects completing a document that isn't PENDING_UPLOAD anymore", async () => {
-    const { documentId, uploadUrl, uploadFields } = await presignDocument(app, ownerCookie, organizationId, knowledgeBaseId);
+    const { documentId, uploadUrl } = await presignDocument(app, ownerCookie, organizationId, knowledgeBaseId);
 
-    await uploadToPresignedPost(uploadUrl, uploadFields, "hello again");
+    await uploadToPresignedUrl(uploadUrl, "hello again");
 
     const first = await app.inject({
       method: "POST",
@@ -285,10 +273,10 @@ describe("document routes", () => {
     });
 
     it("valid upload: a body within the declared size completes successfully", async () => {
-      const { documentId, uploadUrl, uploadFields } = await presignDocument(app, uploadOwnerCookie, uploadOrgId, uploadKbId, 20);
+      const { documentId, uploadUrl } = await presignDocument(app, uploadOwnerCookie, uploadOrgId, uploadKbId, 20);
 
-      const uploadResponse = await uploadToPresignedPost(uploadUrl, uploadFields, "within the limit");
-      expect(uploadResponse.status).toBe(204);
+      const uploadResponse = await uploadToPresignedUrl(uploadUrl, "within the limit");
+      expect(uploadResponse.status).toBe(200);
 
       const response = await app.inject({
         method: "POST",
@@ -300,13 +288,17 @@ describe("document routes", () => {
       expect(response.json().status).toBe("QUEUED");
     });
 
-    it("oversized upload: the storage layer itself rejects a body bigger than the declared size — no object is ever created", async () => {
-      // Declares 10 bytes, then genuinely attempts to upload more than
-      // that through the real presigned POST — this is
-      // createPresignedUpload's primary defense (a content-length-range
-      // policy condition), not app-level logic: MinIO (and real S3/R2,
-      // same API) refuses the request outright.
-      const { documentId, uploadUrl, uploadFields, storageKey } = await presignDocument(
+    it("oversized upload via the real presigned URL: the storage layer accepts it (a presigned PUT can't enforce content-length-range), but /complete's post-hoc size check still catches and deletes it", async () => {
+      // Declares 10 bytes, then genuinely uploads more than that through
+      // the real presigned PUT this endpoint actually returns — unlike
+      // the old presigned-POST version, there is no storage-layer
+      // rejection to observe here (see lib/storage.ts's
+      // createPresignedUpload doc comment for why); this proves the
+      // post-hoc backstop below is what actually catches it when reached
+      // through the real client-facing flow, not just via a direct
+      // s3.send bypass (see the "malicious client" test below for that
+      // angle).
+      const { documentId, uploadUrl, storageKey } = await presignDocument(
         app,
         uploadOwnerCookie,
         uploadOrgId,
@@ -314,17 +306,10 @@ describe("document routes", () => {
         10,
       );
 
-      const uploadResponse = await uploadToPresignedPost(uploadUrl, uploadFields, "this body is way more than ten bytes");
-      expect(uploadResponse.status).toBe(400);
-      const errorBody = await uploadResponse.text();
-      expect(errorBody).toContain("EntityTooLarge");
+      const uploadResponse = await uploadToPresignedUrl(uploadUrl, "this body is way more than ten bytes");
+      expect(uploadResponse.status).toBe(200);
+      expect(await objectExists(storageKey)).toBe(true);
 
-      // No object was ever written at this key — the rejection happened
-      // before S3 accepted anything, not after.
-      expect(await objectExists(storageKey)).toBe(false);
-
-      // /complete correctly reports there's nothing there, exactly as if
-      // the client had never uploaded at all.
       const response = await app.inject({
         method: "POST",
         url: `/documents/${documentId}/complete`,
@@ -332,6 +317,9 @@ describe("document routes", () => {
         payload: { organizationId: uploadOrgId },
       });
       expect(response.statusCode).toBe(409);
+
+      // The oversized object was caught and removed, not left behind.
+      expect(await objectExists(storageKey)).toBe(false);
     });
 
     it("malicious client lying about size: an oversized object that lands in storage anyway is caught and deleted at completion", async () => {
@@ -461,8 +449,8 @@ describe("document routes", () => {
       // uploaded object — goes through the real presign+upload flow
       // rather than createDocumentRow, specifically to prove a real S3
       // object gets deleted.
-      const { documentId, uploadUrl, uploadFields } = await presignDocument(app, ownerCookie, organizationId, knowledgeBaseId);
-      await uploadToPresignedPost(uploadUrl, uploadFields, "to be deleted");
+      const { documentId, uploadUrl } = await presignDocument(app, ownerCookie, organizationId, knowledgeBaseId);
+      await uploadToPresignedUrl(uploadUrl, "to be deleted");
 
       const stored = await withTenantTransaction(organizationId, (tx) => tx.document.findUniqueOrThrow({ where: { id: documentId } }));
 
@@ -516,8 +504,8 @@ describe("document routes", () => {
     });
 
     it("falls back to a retry job when inline S3 cleanup fails, without orphaning the object or losing the DB truth", async () => {
-      const { documentId, uploadUrl, uploadFields } = await presignDocument(app, ownerCookie, organizationId, knowledgeBaseId);
-      await uploadToPresignedPost(uploadUrl, uploadFields, "will fail to delete inline");
+      const { documentId, uploadUrl } = await presignDocument(app, ownerCookie, organizationId, knowledgeBaseId);
+      await uploadToPresignedUrl(uploadUrl, "will fail to delete inline");
       const stored = await withTenantTransaction(organizationId, (tx) => tx.document.findUniqueOrThrow({ where: { id: documentId } }));
 
       const sendSpy = vi.spyOn(s3, "send").mockRejectedValueOnce(new Error("simulated S3 outage"));
@@ -811,8 +799,8 @@ describe("document routes", () => {
       // is the one that crosses it.
       await redis.set(quotaKey(org.organizationId), 200, "EX", 86_400);
 
-      const { documentId, uploadUrl, uploadFields } = await presignDocument(app, org.sessionCookie, org.organizationId, kbId);
-      await uploadToPresignedPost(uploadUrl, uploadFields, "quota probe");
+      const { documentId, uploadUrl } = await presignDocument(app, org.sessionCookie, org.organizationId, kbId);
+      await uploadToPresignedUrl(uploadUrl, "quota probe");
 
       const response = await app.inject({
         method: "POST",
@@ -860,13 +848,13 @@ describe("document routes", () => {
 
       await redis.set(quotaKey(orgA.organizationId), 200, "EX", 86_400);
 
-      const { documentId: docA, uploadUrl: uploadUrlA, uploadFields: uploadFieldsA } = await presignDocument(
+      const { documentId: docA, uploadUrl: uploadUrlA } = await presignDocument(
         app,
         orgA.sessionCookie,
         orgA.organizationId,
         kbAResponse.json().id,
       );
-      await uploadToPresignedPost(uploadUrlA, uploadFieldsA, "org a");
+      await uploadToPresignedUrl(uploadUrlA, "org a");
       const responseA = await app.inject({
         method: "POST",
         url: `/documents/${docA}/complete`,
@@ -876,13 +864,13 @@ describe("document routes", () => {
       expect(responseA.statusCode).toBe(429);
 
       // Org A's exhausted quota must not affect Org B's own counter.
-      const { documentId: docB, uploadUrl: uploadUrlB, uploadFields: uploadFieldsB } = await presignDocument(
+      const { documentId: docB, uploadUrl: uploadUrlB } = await presignDocument(
         app,
         orgB.sessionCookie,
         orgB.organizationId,
         kbBResponse.json().id,
       );
-      await uploadToPresignedPost(uploadUrlB, uploadFieldsB, "org b");
+      await uploadToPresignedUrl(uploadUrlB, "org b");
       const responseB = await app.inject({
         method: "POST",
         url: `/documents/${docB}/complete`,
@@ -911,7 +899,7 @@ describe("document routes", () => {
       await redis.set(quotaKey(org.organizationId), 200, "EX", 86_400);
 
       const first = await presignDocument(app, org.sessionCookie, org.organizationId, kbId);
-      await uploadToPresignedPost(first.uploadUrl, first.uploadFields, "before reset");
+      await uploadToPresignedUrl(first.uploadUrl, "before reset");
       const blocked = await app.inject({
         method: "POST",
         url: `/documents/${first.documentId}/complete`,
@@ -927,7 +915,7 @@ describe("document routes", () => {
       await redis.del(quotaKey(org.organizationId));
 
       const second = await presignDocument(app, org.sessionCookie, org.organizationId, kbId);
-      await uploadToPresignedPost(second.uploadUrl, second.uploadFields, "after reset");
+      await uploadToPresignedUrl(second.uploadUrl, "after reset");
       const allowed = await app.inject({
         method: "POST",
         url: `/documents/${second.documentId}/complete`,

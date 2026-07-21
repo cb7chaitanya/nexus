@@ -147,18 +147,19 @@ export async function knowledgeBaseRoutes(app: FastifyInstance): Promise<void> {
         });
       });
 
-      // maxSizeBytes is THIS caller's own declared input.sizeBytes, not
-      // the platform-wide MAX_UPLOAD_SIZE_BYTES ceiling — see
-      // createPresignedUpload's doc comment for why that's the whole
-      // point (binds the storage-level enforcement to what was actually
-      // declared, not just the platform maximum).
-      const { url, fields, expiresAt } = await createPresignedUpload(document.storageKey, document.mimeType, input.sizeBytes);
+      // See createPresignedUpload's own doc comment: presigned PUT, not
+      // presigned POST — R2 doesn't support presigned POST at all.
+      // input.sizeBytes is no longer bound into the presign itself (a
+      // presigned PUT can't enforce a size range the way a POST policy
+      // could); POST /documents/:id/complete's post-hoc size check is
+      // now the actual enforcement, not just a backstop.
+      const { url, expiresAt } = await createPresignedUpload(document.storageKey, document.mimeType);
 
-      // Presigned POST, not a presigned PUT (see createPresignedUpload) —
-      // the client must POST a multipart/form-data request to `uploadUrl`
-      // with every entry of `uploadFields` included as its own form
-      // field, plus the file itself under a field named "file".
-      reply.status(201).send({ document, uploadUrl: url, uploadFields: fields, uploadUrlExpiresAt: expiresAt });
+      // Presigned PUT, not presigned POST — the client PUTs the raw file
+      // bytes directly to `uploadUrl` with a `Content-Type` header
+      // matching what was declared here, no multipart form / uploadFields
+      // involved.
+      reply.status(201).send({ document, uploadUrl: url, uploadUrlExpiresAt: expiresAt });
     },
   );
 
