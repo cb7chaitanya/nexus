@@ -349,7 +349,142 @@ volumes (`raas_postgres_data`, `raas_redis_data`,
 `raas_object_storage_data` are not removed by a plain `down`) — data
 survives a full stack restart. Only `down -v` deletes volumes, and that
 should never be run against a real deployment's data without a separate,
-verified backup.
+verified backup — see [Backups](#backups) below for what "verified" means concretely.
+
+## Backups
+
+Scripts: [`infra/postgres/backup.sh`](./infra/postgres/backup.sh) and
+[`infra/postgres/restore.sh`](./infra/postgres/restore.sh), for the
+self-hosted `postgres` service in `docker-compose.prod.yml`
+(`pgvector/pgvector:pg16`). Both run `pg_dump`/`pg_restore` **inside**
+that container via `docker compose exec` — never a host-installed
+client — so the dump/restore tooling always exactly matches the running
+server version.
+
+Object storage (S3/R2/MinIO) is not covered here: it's covered by the
+storage provider's own durability/versioning (real S3/R2's default
+durability, or MinIO's own backend if self-hosting that too) — Postgres
+is the only piece of state this repo's own tooling backs up, since it's
+the only piece with no such provider-level guarantee by default.
+
+### Create a backup
+
+```bash
+infra/postgres/backup.sh
+```
+
+Writes a timestamped, compressed custom-format dump
+(`backups/raas_<db>_<UTC timestamp>.dump` by default — override with the
+`BACKUP_DIR` env var) and immediately verifies it's a valid, listable
+`pg_restore` archive before considering the backup successful — a
+truncated or corrupt dump fails the script right there, not during a
+future real recovery. Then deletes any backups in `BACKUP_DIR` older than
+`BACKUP_RETENTION_DAYS` (default **14 days**) using the file's mtime — 14
+days covers "we noticed a bad deploy or a bad bulk-delete a week later,"
+the realistic detection window for this stack's kind of incident, while
+keeping the backup directory's disk footprint bounded automatically
+instead of growing forever. Raise it (e.g. to 30–90 days) if actual
+operational experience or a compliance requirement calls for a longer
+window — it's a plain env var, not a code change.
+
+### Restore / verify a backup
+
+```bash
+infra/postgres/restore.sh <dump-file>
+```
+
+With no `--target-db`, this is the **verification procedure**: restores
+the dump into a throwaway scratch database
+(`raas_restore_verify`), runs a sanity query against it, and drops it —
+proving the dump actually restores cleanly without touching real data.
+Run this after every backup you care about trusting (e.g. as a step
+right after `backup.sh` in the same cron/systemd job — see below), not
+just when a real recovery is already underway.
+
+**Real recovery** (restoring over the actual production database) is
+deliberately harder to trigger than verification — it requires both
+`--target-db` matching `POSTGRES_DB` and `--force`:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod stop api worker
+infra/postgres/restore.sh <dump-file> --target-db raas --force
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d api worker
+```
+
+Stopping `api`/`worker` first avoids them writing to the database while
+it's being dropped and recreated. The restore preserves the `raas_app`
+role's GRANTs (the dump includes them; the script restores with
+`--no-owner`, not `--no-privileges`), so the application can read/write
+again immediately once restarted — no manual re-grant step. This assumes
+`raas_app` itself already exists in the target Postgres cluster (true for
+the normal case: restoring into the same running deployment); restoring
+onto a brand-new, never-started Postgres volume needs a normal `docker
+compose up` first (which runs `infra/postgres/init.prod.sh` and creates
+the role) before `restore.sh` has anything to restore into.
+
+### Scheduling
+
+Neither script self-schedules — wire one of these into the host running
+`docker compose`:
+
+**cron** (daily at 02:00, output logged, verification runs right after):
+```cron
+0 2 * * * cd /path/to/raas && BACKUP_DIR=/var/backups/raas ./infra/postgres/backup.sh >> /var/log/raas-backup.log 2>&1 && LATEST=$(ls -t /var/backups/raas/*.dump | head -1) && ./infra/postgres/restore.sh "$LATEST" >> /var/log/raas-backup.log 2>&1
+```
+
+**systemd timer** (equivalent, if the host already manages services that way):
+```ini
+# /etc/systemd/system/raas-backup.service
+[Unit]
+Description=RaaS Postgres backup + verification
+
+[Service]
+Type=oneshot
+WorkingDirectory=/path/to/raas
+Environment=BACKUP_DIR=/var/backups/raas
+ExecStart=/bin/bash -c './infra/postgres/backup.sh && LATEST=$(ls -t /var/backups/raas/*.dump | head -1) && ./infra/postgres/restore.sh "$LATEST"'
+```
+```ini
+# /etc/systemd/system/raas-backup.timer
+[Unit]
+Description=Daily RaaS Postgres backup
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+`BACKUP_DIR` should point somewhere that survives the `raas_postgres_data`
+volume being lost (a different disk/mount, or synced off-host) — a backup
+that lives on the same volume as the database it's backing up doesn't
+protect against the failure modes that actually matter (disk failure,
+`down -v`, a bad `rm`).
+
+### If migrating to a managed Postgres provider (RDS, Neon, etc.) instead
+
+The scripts and scheduling above are for the `postgres` service this
+compose stack runs itself. If that service is ever replaced with a
+managed provider instead (pointing `DATABASE_URL`/`APP_DATABASE_URL` at
+it, same as the existing MinIO → real S3/R2 swap for object storage),
+`infra/postgres/backup.sh`/`restore.sh` no longer apply — use the
+provider's own backup mechanism instead:
+- **Enable automated backups and PITR** (point-in-time recovery) in the
+  provider's dashboard/API — both RDS and Neon support this natively;
+  don't reimplement it with `pg_dump` against a managed instance.
+- **Retention**: match or exceed the 14-day default this repo's own
+  scripts use, per actual operational/compliance need.
+- **Recovery procedure**: the provider's own restore-to-point-in-time
+  flow (typically creates a new instance/branch at the chosen timestamp)
+  — point `DATABASE_URL`/`APP_DATABASE_URL` at it and re-run `prisma
+  migrate deploy` if the restored point predates a since-applied
+  migration.
+- **Verification**: the same principle as `restore.sh`'s scratch-database
+  check applies regardless of provider — periodically actually restore to
+  a throwaway instance and query it, don't just trust that backups are
+  "probably fine" because nothing has alerted.
 
 ## CI
 

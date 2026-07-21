@@ -14,6 +14,10 @@ dist/
 .env.*.local
 .env.prod
 
+# postgres backups (infra/postgres/backup.sh's default BACKUP_DIR) — real
+# customer data, never committed
+/backups/
+
 # prisma
 packages/db/generated/
 
