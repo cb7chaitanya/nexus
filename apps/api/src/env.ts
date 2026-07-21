@@ -23,6 +23,15 @@ function requirePositiveInt(name: string, rawValue: string | undefined, defaultV
   return value;
 }
 
+// Resolved once, with the same defaults their own env fields below use —
+// referenced by both the provider fields themselves and by
+// OPENAI_API_KEY/GROQ_API_KEY's requiredness checks further down, so
+// "unset" and "explicitly set to the default value" are never treated
+// differently (a plain `process.env.X === "openai"` check would miss the
+// unset-defaults-to-openai case).
+const resolvedEmbeddingProvider = (process.env.EMBEDDING_PROVIDER ?? "openai") as "openai" | "fake";
+const resolvedLlmProvider = (process.env.LLM_PROVIDER ?? "openai") as "openai" | "groq" | "fake";
+
 export const env = {
   API_PORT: Number(process.env.API_PORT ?? 4000),
   API_HOST: process.env.API_HOST ?? "0.0.0.0",
@@ -48,11 +57,17 @@ export const env = {
   // Defaults to "openai" so a misconfigured production env fails loudly
   // (missing OPENAI_API_KEY) rather than silently answering with fake
   // embeddings/text.
-  EMBEDDING_PROVIDER: (process.env.EMBEDDING_PROVIDER ?? "openai") as "openai" | "fake",
+  EMBEDDING_PROVIDER: resolvedEmbeddingProvider,
   OPENAI_EMBEDDING_BATCH_SIZE: Number(process.env.OPENAI_EMBEDDING_BATCH_SIZE ?? 100),
   FAKE_EMBEDDING_DELAY_MS: Number(process.env.FAKE_EMBEDDING_DELAY_MS ?? 0),
-  LLM_PROVIDER: (process.env.LLM_PROVIDER ?? "openai") as "openai" | "fake",
+  // "groq" reuses @raas/providers's OpenAIChatProvider unchanged, pointed
+  // at Groq's own OpenAI-compatible /chat/completions endpoint via
+  // baseUrl (see lib/llm-provider.ts) — Groq has no embeddings API, so
+  // this is a chat-completions-only alternative to "openai", never a
+  // value for EMBEDDING_PROVIDER above.
+  LLM_PROVIDER: resolvedLlmProvider,
   OPENAI_CHAT_MODEL: process.env.OPENAI_CHAT_MODEL ?? "gpt-4o-mini",
+  GROQ_CHAT_MODEL: process.env.GROQ_CHAT_MODEL ?? "llama-3.3-70b-versatile",
   // Hard per-request ceiling on completion output tokens (see
   // @raas/providers's OpenAIChatProvider) — the daily chat token budget
   // below can only reject the NEXT request once a prior one has already
@@ -62,10 +77,14 @@ export const env = {
   // nominal one.
   MAX_COMPLETION_TOKENS: requirePositiveInt("MAX_COMPLETION_TOKENS", process.env.MAX_COMPLETION_TOKENS, 1024),
   FAKE_LLM_DELAY_MS: Number(process.env.FAKE_LLM_DELAY_MS ?? 0),
-  // Required unless BOTH providers are set to "fake" — either provider
-  // being "openai" means a real key is load-bearing.
+  // Load-bearing only when LLM_PROVIDER is actually "groq" — same
+  // fail-fast-on-missing-secret discipline as OPENAI_API_KEY below.
+  GROQ_API_KEY: resolvedLlmProvider === "groq" ? requireEnv("GROQ_API_KEY") : (process.env.GROQ_API_KEY ?? ""),
+  // Required exactly when something actually uses "openai" — either
+  // provider being "fake", or LLM_PROVIDER being "groq", never makes this
+  // key load-bearing on its own.
   OPENAI_API_KEY:
-    process.env.EMBEDDING_PROVIDER === "fake" && process.env.LLM_PROVIDER === "fake" ? (process.env.OPENAI_API_KEY ?? "") : requireEnv("OPENAI_API_KEY"),
+    resolvedEmbeddingProvider === "openai" || resolvedLlmProvider === "openai" ? requireEnv("OPENAI_API_KEY") : (process.env.OPENAI_API_KEY ?? ""),
   // Rate limiting (packages/rate-limit). The auth default here is
   // deliberately higher than the ticket's own "10/minute/IP" example —
   // every apps.inject() test request in this suite shares one apparent
