@@ -7,8 +7,9 @@ its own multi-stage `Dockerfile`, orchestrated by
 Redis, and S3-compatible object storage.
 
 Everything in this document was verified by actually building and running
-the stack locally against real Postgres/Redis/MinIO containers — not just
-written and assumed to work.
+the stack locally against real Postgres/Redis containers and a real S3-
+compatible provider (Cloudflare R2) — not just written and assumed to
+work.
 
 ## Required environment variables
 
@@ -30,11 +31,13 @@ guards) — there is no way to silently deploy with a blank secret.
 | `REDIS_PASSWORD` | yes | redis, api, worker | Redis backs BullMQ job data and rate-limit counters in production — always password-protected, unlike the local dev stack. |
 | `WEB_ORIGIN` | yes | api | The one origin allowed to make credentialed cross-origin requests. Never a wildcard — see `docs/cors-csrf-policy.md`. |
 | `SESSION_JWT_SECRET` | yes | api | HMAC signing key for session JWTs. Generate with `openssl rand -base64 48`; never reuse the dev value. |
-| `S3_BUCKET` | yes | api, worker | Created automatically on API boot if it doesn't exist (`ensureBucketExists`). |
-| `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | yes | api, worker, object-storage | Doubles as the bundled MinIO's root credentials when using the built-in `object-storage` service. |
+| `S3_BUCKET` | yes | api, worker | Must already exist at the provider — created automatically on API boot only if the provider's API allows it (`ensureBucketExists`); not all providers do (e.g. R2 buckets are typically created via the dashboard/API ahead of time). |
+| `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | yes | api, worker | Real credentials for whichever S3-compatible provider `S3_ENDPOINT` points at — no self-hosted object storage is bundled in this stack. |
+| `S3_ENDPOINT` | yes | api, worker | No default — every deployment must point this at a real provider (e.g. `https://<account_id>.r2.cloudflarestorage.com` for Cloudflare R2). |
 | `OPENAI_API_KEY` | yes, unless both providers below are `fake` | api, worker | |
-| `EMBEDDING_PROVIDER` / `LLM_PROVIDER` | no (default `openai`) | api, worker | `fake` is a real, deterministic, offline provider — never use it in a real deployment. |
-| `S3_ENDPOINT`, `S3_REGION`, `S3_FORCE_PATH_STYLE` | no | api, worker | Point at a real S3/R2 provider instead of the bundled MinIO by setting these and deleting the `object-storage` service — no code change either way. |
+| `EMBEDDING_PROVIDER` / `LLM_PROVIDER` | no (default `openai`) | api, worker | `fake` is a real, deterministic, offline provider — never use it in a real deployment. `LLM_PROVIDER=groq` is a real chat-completions-only alternative (see `GROQ_API_KEY`/`GROQ_CHAT_MODEL` below) — Groq has no embeddings API, so it's never valid for `EMBEDDING_PROVIDER`. |
+| `GROQ_API_KEY` / `GROQ_CHAT_MODEL` | yes if `LLM_PROVIDER=groq`, else no | api | See `apps/api/src/lib/llm-provider.ts` — reuses `OpenAIChatProvider` against Groq's OpenAI-compatible endpoint. |
+| `S3_REGION`, `S3_FORCE_PATH_STYLE` | no | api, worker | `S3_FORCE_PATH_STYLE=false` for real AWS S3, `true` for R2 and most other S3-compatible providers (verified against R2). `S3_REGION=auto` for R2. |
 | `API_PORT`, `WEB_PORT` | no (4000 / 3000) | api, web | Host ports published by compose. |
 | `SESSION_TTL_SECONDS` | no (604800 = 7 days) | api | |
 | `MAX_COMPLETION_TOKENS` | no (`1024`) | api | Hard per-request ceiling on chat completion output tokens — the real per-request cost backstop. |
@@ -184,7 +187,7 @@ a host that has never run it — steady-state redeploys only need
   terminate TLS or handle a public hostname itself.
 - [ ] The host has enough free memory for `WORKER_EXTRACTION_CONCURRENCY
   × WORKER_MAX_DOCUMENT_BYTES` (defaults: `4 × 200 MiB` = 800 MiB worst
-  case, on top of Node's own baseline) plus Postgres/Redis/MinIO's own
+  case, on top of Node's own baseline) plus Postgres/Redis's own
   footprint. `WORKER_MEMORY_RSS_LIMIT_BYTES` (default 1.5 GiB) should sit
   comfortably above that static worst case but still under the
   container's actual memory limit — it's the runtime backstop for when a
@@ -228,7 +231,7 @@ Once every service reports `healthy` (`docker compose ... ps`):
    all).
 4. **A real document upload → ingestion → chat round-trip** (through
    `web`, or directly against `api` if `web` isn't wired up yet) confirms
-   the full chain: presigned upload to MinIO/S3, `worker` picking up the
+   the full chain: presigned upload directly to S3/R2, `worker` picking up the
    ingestion job (check `worker`'s logs for `"worker ready"` at startup
    and job-completion log lines), embeddings actually written, and a chat
    request retrieving them. This is the one step that can't be
@@ -252,9 +255,9 @@ than restarting services out of order.
 .env.prod up -d` performs it automatically. It is documented here so the
 *reason* for each step is explicit, not just the mechanics:
 
-1. **`postgres`, `redis`, `object-storage`** start first and must each
-   report healthy (real `pg_isready` / `redis-cli ping` / `mc ready`
-   checks, not just "container is running").
+1. **`postgres`, `redis`** start first and must each report healthy (real
+   `pg_isready` / `redis-cli ping` checks, not just "container is
+   running").
 2. **`migrate`** runs once `postgres` is healthy: applies
    `prisma migrate deploy` against the real database and exits. `api` and
    `worker` both wait on this exiting `0` (`condition:
@@ -262,7 +265,7 @@ than restarting services out of order.
    [Migrations](#migrations) below. If `migrate` fails, the deploy stops
    there; `api`/`worker` never come up against a schema they don't match.
 3. **`api`** and **`worker`** start once `migrate` has succeeded and
-   `redis`/`object-storage` are healthy. Each has its own Docker
+   `redis` is healthy. Each has its own Docker
    `HEALTHCHECK` — `GET /health/live` for the API, `GET /health` for the
    worker (`apps/worker/src/health-server.ts`; checks real Redis and
    BullMQ queue connectivity, not a fake always-succeeds response). Both
@@ -345,9 +348,10 @@ possibility for a future one):
 
 **Full stack rollback:** `docker compose -f docker-compose.prod.yml
 --env-file .env.prod down` stops every service without touching the named
-volumes (`raas_postgres_data`, `raas_redis_data`,
-`raas_object_storage_data` are not removed by a plain `down`) — data
-survives a full stack restart. Only `down -v` deletes volumes, and that
+volumes (`raas_postgres_data`, `raas_redis_data` are not removed by a
+plain `down`) — data survives a full stack restart. Object storage lives
+entirely at the external S3/R2 provider, outside this stack's own
+volumes/lifecycle. Only `down -v` deletes volumes, and that
 should never be run against a real deployment's data without a separate,
 verified backup — see [Backups](#backups) below for what "verified" means concretely.
 
@@ -361,10 +365,9 @@ that container via `docker compose exec` — never a host-installed
 client — so the dump/restore tooling always exactly matches the running
 server version.
 
-Object storage (S3/R2/MinIO) is not covered here: it's covered by the
-storage provider's own durability/versioning (real S3/R2's default
-durability, or MinIO's own backend if self-hosting that too) — Postgres
-is the only piece of state this repo's own tooling backs up, since it's
+Object storage (S3/R2) is not covered here: it's covered by the storage
+provider's own durability/versioning — Postgres is the only piece of
+state this repo's own tooling backs up, since it's
 the only piece with no such provider-level guarantee by default.
 
 ### Create a backup
@@ -468,7 +471,8 @@ protect against the failure modes that actually matter (disk failure,
 The scripts and scheduling above are for the `postgres` service this
 compose stack runs itself. If that service is ever replaced with a
 managed provider instead (pointing `DATABASE_URL`/`APP_DATABASE_URL` at
-it, same as the existing MinIO → real S3/R2 swap for object storage),
+it — object storage already works this way, since S3_ENDPOINT always
+points at a real external provider, not anything this stack runs),
 `infra/postgres/backup.sh`/`restore.sh` no longer apply — use the
 provider's own backup mechanism instead:
 - **Enable automated backups and PITR** (point-in-time recovery) in the
@@ -485,6 +489,60 @@ provider's own backup mechanism instead:
   check applies regardless of provider — periodically actually restore to
   a throwaway instance and query it, don't just trust that backups are
   "probably fine" because nothing has alerted.
+
+## HTTPS / reverse proxy
+
+[`infra/caddy/Caddyfile`](./infra/caddy/Caddyfile) + the `caddy` service
+in `docker-compose.prod.yml` (Caddy 2, auto-HTTPS via Let's Encrypt,
+automatic HTTP→HTTPS redirect — both built into Caddy, no extra
+directives needed). Behind the `proxy` Compose profile, so a plain
+`docker compose up -d` never starts it — `api`/`web` publish their own
+ports directly for that case (local rehearsal / no domain yet).
+
+**This only works with a real, publicly-reachable host** — a machine
+with a real static public IP that DNS can point at and that's actually
+reachable on ports 80/443 from the internet. It does **not** work from a
+laptop/workstation behind NAT with only a private LAN IP (verified: no
+public IP path exists from a machine in that position — DNS pointed at a
+NAT'd private address never routes). If this stack is only running
+locally so far, treat this section as prepared, syntax-validated
+config to activate once deployed to a real host — not something to turn
+on today.
+
+### Activate
+
+1. Point `APP_DOMAIN` and `API_DOMAIN`'s DNS `A`/`AAAA` records at the
+   real host's public IP.
+2. In `.env.prod`, set:
+   ```
+   APP_DOMAIN=app.your-real-domain.com
+   API_DOMAIN=api.your-real-domain.com
+   WEB_ORIGIN=https://app.your-real-domain.com
+   ```
+   `WEB_ORIGIN` must match `APP_DOMAIN` exactly (with `https://`) — this
+   is what `apps/api`'s CORS check compares the browser's real origin
+   against (see `docs/cors-csrf-policy.md`); a mismatch doesn't fail
+   loudly, it silently breaks every credentialed request from the browser.
+3. Remove the `ports:` block from both the `api` and `web` services in
+   `docker-compose.prod.yml` (each is marked with a comment pointing back
+   here) — once Caddy is the public entry point, neither should still
+   accept direct connections on its own port.
+4. `docker compose -f docker-compose.prod.yml --env-file .env.prod --profile proxy up -d --build`
+   — starts everything, `caddy` included. First request to each domain
+   triggers Caddy's ACME HTTP-01 challenge and certificate issuance
+   automatically; watch `docker compose ... logs caddy` if it doesn't
+   come up healthy immediately.
+5. Verify: `curl -I https://app.your-real-domain.com` and `curl -I
+   http://app.your-real-domain.com` (the second should return a redirect
+   to `https://`, not serve content directly).
+
+### Steady state
+
+`caddy_data` (the named volume) holds the issued certificates — it
+survives a plain `down`/`up`, so certificates aren't re-issued on every
+redeploy (Let's Encrypt rate-limits repeated issuance for the same
+domain). Only `down -v` would lose it, same caveat as every other named
+volume in this stack.
 
 ## CI
 
