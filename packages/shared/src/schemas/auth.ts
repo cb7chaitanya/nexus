@@ -36,4 +36,20 @@ export const loginSchema = z.object({
 });
 export type LoginInput = z.infer<typeof loginSchema>;
 
+// POST /auth/signup no longer creates the User/Organization directly — it
+// stages the signup in Redis and emails a 6-digit code; these two
+// complete or restart that pending signup. pendingSignupId is the opaque
+// id returned from the signup response, not a secret itself (the OTP is
+// the actual credential).
+export const verifySignupOtpSchema = z.object({
+  pendingSignupId: z.string().uuid(),
+  code: z.string().regex(/^\d{6}$/, "Code must be 6 digits"),
+});
+export type VerifySignupOtpInput = z.infer<typeof verifySignupOtpSchema>;
+
+export const resendSignupOtpSchema = z.object({
+  pendingSignupId: z.string().uuid(),
+});
+export type ResendSignupOtpInput = z.infer<typeof resendSignupOtpSchema>;
+
 export { slugSchema };

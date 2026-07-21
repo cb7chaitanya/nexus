@@ -7,8 +7,16 @@ export {
 } from "./errors.js";
 export { parseOrThrow } from "./validate.js";
 export { MAX_UPLOAD_SIZE_BYTES, MAX_CHUNKS_PER_DOCUMENT, PLATFORM_EMBEDDING_DIM, QUEUE_NAMES, JOB_NAMES } from "./constants.js";
-export { emailSchema, loginSchema, passwordSchema, signupSchema, slugSchema } from "./schemas/auth.js";
-export type { LoginInput, SignupInput } from "./schemas/auth.js";
+export {
+  emailSchema,
+  loginSchema,
+  passwordSchema,
+  resendSignupOtpSchema,
+  signupSchema,
+  slugSchema,
+  verifySignupOtpSchema,
+} from "./schemas/auth.js";
+export type { LoginInput, ResendSignupOtpInput, SignupInput, VerifySignupOtpInput } from "./schemas/auth.js";
 export {
   acceptInviteSchema,
   changeMemberRoleSchema,

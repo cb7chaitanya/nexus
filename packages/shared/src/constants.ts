@@ -52,6 +52,14 @@ export const QUEUE_NAMES = {
   // concern for independent concurrency control, not overloading an
   // existing queue with a second, unrelated job type.
   documentCleanup: "document-cleanup",
+  // Generic transactional email delivery (currently: signup OTP codes) —
+  // apps/api builds the message content, apps/worker just delivers it via
+  // whichever EmailProvider is configured (@raas/providers). Its own
+  // queue rather than piggybacking on an existing one: email delivery has
+  // a different failure/latency profile (an external provider outage)
+  // than S3 cleanup or document ingestion and shouldn't compete with or
+  // be conflated with either in metrics/concurrency.
+  email: "email-delivery",
 } as const;
 
 export const JOB_NAMES = {
@@ -62,4 +70,5 @@ export const JOB_NAMES = {
   sweepStuckDocuments: "sweep-stuck-documents",
   cleanupKnowledgeBase: "cleanup-knowledge-base",
   cleanupDocumentStorage: "cleanup-document-storage",
+  sendTransactionalEmail: "send-transactional-email",
 } as const;
