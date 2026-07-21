@@ -35,7 +35,9 @@
   --chart-3: oklch(0.72 0.16 70);
   --chart-4: oklch(0.62 0.19 25);
   --chart-5: oklch(0.6 0.13 220);
-  --sidebar: oklch(0.98 0.004 275);
+  /* A wider gap from --background than the bare minimum — the previous
+     0.995 vs 0.98 pairing was barely perceptible as a distinct surface. */
+  --sidebar: oklch(0.965 0.006 275);
   --sidebar-foreground: oklch(0.18 0.012 275);
   --sidebar-primary: oklch(0.564 0.229 291.7);
   --sidebar-primary-foreground: oklch(0.99 0.01 291);
@@ -154,6 +156,58 @@
   }
 }
 
+/* Syntax highlighting (rehype-highlight, chat code blocks) — hand-mapped
+   to the existing chart-* hue set rather than importing a prebuilt
+   highlight.js theme, so code blocks stay inside this app's own palette
+   instead of introducing a second, clashing color language. */
+.hljs-keyword,
+.hljs-built_in,
+.hljs-selector-tag {
+  color: var(--chart-1);
+}
+.hljs-string,
+.hljs-attr,
+.hljs-regexp,
+.hljs-addition {
+  color: var(--chart-2);
+}
+.hljs-number,
+.hljs-literal,
+.hljs-symbol {
+  color: var(--chart-3);
+}
+.hljs-title,
+.hljs-title.function_,
+.hljs-title.class_,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class {
+  color: var(--chart-5);
+}
+.hljs-comment,
+.hljs-quote {
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+.hljs-deletion,
+.hljs-variable.language_ {
+  color: var(--chart-4);
+}
+.hljs-params,
+.hljs-type,
+.hljs-variable,
+.hljs-property,
+.hljs-meta,
+.hljs-tag {
+  color: var(--foreground);
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 600;
+}
+
 @layer utilities {
   .scrollbar-thin {
     scrollbar-width: thin;
@@ -166,5 +220,22 @@
   .scrollbar-thin::-webkit-scrollbar-thumb {
     background-color: var(--border);
     border-radius: 999px;
+  }
+
+  @keyframes caret-blink {
+    0%,
+    45% {
+      opacity: 1;
+    }
+    50%,
+    95% {
+      opacity: 0;
+    }
+    100% {
+      opacity: 1;
+    }
+  }
+  .animate-caret-blink {
+    animation: caret-blink 1s step-end infinite;
   }
 }

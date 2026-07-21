@@ -2,12 +2,20 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
-function Card({ className, ...props }: React.ComponentProps<"div">) {
+function Card({
+  className,
+  interactive = false,
+  ...props
+}: React.ComponentProps<"div"> & {
+  /** Opt-in hover lift/elevation for cards that are themselves a link/click target — leave off for purely informational cards (stats, settings panels). */
+  interactive?: boolean;
+}) {
   return (
     <div
       data-slot="card"
       className={cn(
-        "flex flex-col gap-4 rounded-xl border border-border bg-card text-card-foreground shadow-sm",
+        "flex flex-col gap-4 rounded-xl border border-border bg-card text-card-foreground shadow-xs transition-all duration-200",
+        interactive && "hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md",
         className,
       )}
       {...props}

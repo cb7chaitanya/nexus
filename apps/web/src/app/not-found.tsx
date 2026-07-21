@@ -3,6 +3,7 @@ import { CompassIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/logo";
+import { SubTitle } from "@/components/ui/typography";
 
 export default function NotFound() {
   return (
@@ -13,7 +14,7 @@ export default function NotFound() {
       <div className="flex size-11 items-center justify-center rounded-full bg-muted">
         <CompassIcon className="size-5 text-muted-foreground" />
       </div>
-      <h1 className="mt-4 text-lg font-semibold">Page not found</h1>
+      <SubTitle className="mt-4">Page not found</SubTitle>
       <p className="mt-1.5 max-w-sm text-sm text-muted-foreground">
         The page you&apos;re looking for doesn&apos;t exist or may have been moved.
       </p>

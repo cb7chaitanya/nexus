@@ -6,6 +6,7 @@ import { Loader2Icon, MailCheckIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { SubTitle } from "@/components/ui/typography";
 import { acceptInvite } from "@/lib/api/organizations";
 import { isApiError } from "@/lib/api-error";
 
@@ -32,11 +33,11 @@ export function InviteAcceptCard({ token }: { token: string }) {
   }
 
   return (
-    <div className="w-full max-w-sm rounded-xl border border-border bg-card p-6 text-center shadow-sm">
+    <div className="w-full max-w-sm rounded-xl border border-border bg-card p-6 text-center shadow-xs">
       <div className="mx-auto flex size-10 items-center justify-center rounded-full bg-accent text-accent-foreground">
         <MailCheckIcon className="size-5" />
       </div>
-      <h1 className="mt-4 text-lg font-semibold">You&apos;ve been invited</h1>
+      <SubTitle className="mt-4">You&apos;ve been invited</SubTitle>
       <p className="mt-1.5 text-sm text-muted-foreground">
         Accept this invite to join the organization and start collaborating.
       </p>
