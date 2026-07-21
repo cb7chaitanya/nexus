@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { signupSchema, type SignupInput } from "@raas/shared";
@@ -11,11 +10,10 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { signup } from "@/lib/api/auth";
+import { signup, type PendingSignupResponse } from "@/lib/api/auth";
 import { isApiError } from "@/lib/api-error";
 
-export function SignupForm() {
-  const router = useRouter();
+export function SignupForm({ onPending }: { onPending: (pending: PendingSignupResponse) => void }) {
   const [serverError, setServerError] = useState<string | null>(null);
 
   const {
@@ -27,9 +25,8 @@ export function SignupForm() {
   async function onSubmit(values: SignupInput) {
     setServerError(null);
     try {
-      await signup(values);
-      router.push("/dashboard");
-      router.refresh();
+      const pending = await signup(values);
+      onPending(pending);
     } catch (error) {
       if (isApiError(error) && error.status === 409) {
         setServerError("An account with this email already exists.");

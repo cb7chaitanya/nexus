@@ -6,6 +6,13 @@ export interface SessionResponse {
   organizations: OrganizationWithRole[];
 }
 
+export interface PendingSignupResponse {
+  pendingSignupId: string;
+  email: string;
+  expiresInSeconds: number;
+}
+
+/** Stages the signup and emails a 6-digit code — does not create a session. See verifySignupOtp. */
 export function signup(input: {
   email: string;
   password: string;
@@ -13,7 +20,15 @@ export function signup(input: {
   organizationName: string;
   organizationSlug?: string;
 }) {
-  return apiFetch<SessionResponse>("/auth/signup", { method: "POST", body: input });
+  return apiFetch<PendingSignupResponse>("/auth/signup", { method: "POST", body: input });
+}
+
+export function verifySignupOtp(input: { pendingSignupId: string; code: string }) {
+  return apiFetch<SessionResponse>("/auth/signup/verify", { method: "POST", body: input });
+}
+
+export function resendSignupOtp(input: { pendingSignupId: string }) {
+  return apiFetch<{ expiresInSeconds: number }>("/auth/signup/resend-otp", { method: "POST", body: input });
 }
 
 export function login(input: { email: string; password: string }) {
