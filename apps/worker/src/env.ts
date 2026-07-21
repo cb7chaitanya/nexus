@@ -186,4 +186,20 @@ export const env = {
   // apps/api's own copy of this var: unset leaves captureException calls
   // going to NoopErrorTracker, never load-bearing for startup.
   SENTRY_DSN: process.env.SENTRY_DSN,
+  // Transactional email delivery (send-email queue — apps/api enqueues,
+  // this worker delivers via @raas/providers's EmailProvider). "fake" is
+  // a real, documented choice for local dev/tests (logs instead of
+  // sending — no Resend account needed to exercise the signup-OTP flow).
+  // Defaults to "resend" so a misconfigured production env fails loudly
+  // (missing RESEND_API_KEY) rather than silently swallowing real emails.
+  EMAIL_PROVIDER: (process.env.EMAIL_PROVIDER ?? "resend") as "resend" | "fake",
+  RESEND_API_KEY: process.env.EMAIL_PROVIDER === "fake" ? (process.env.RESEND_API_KEY ?? "") : requireEnv("RESEND_API_KEY"),
+  // Only load-bearing for the real Resend provider — FakeEmailProvider
+  // never reads it.
+  EMAIL_FROM_ADDRESS: process.env.EMAIL_PROVIDER === "fake" ? (process.env.EMAIL_FROM_ADDRESS ?? "") : requireEnv("EMAIL_FROM_ADDRESS"),
+  FAKE_EMAIL_DELAY_MS: Number(process.env.FAKE_EMAIL_DELAY_MS ?? 0),
+  // Low-volume, I/O-bound against an external provider — same tier as
+  // WORKER_EMBEDDING_CONCURRENCY, not the "cheap, high concurrency" tier
+  // processing/documentCleanup get.
+  WORKER_EMAIL_CONCURRENCY: requirePositiveInt("WORKER_EMAIL_CONCURRENCY", process.env.WORKER_EMAIL_CONCURRENCY, 5),
 };

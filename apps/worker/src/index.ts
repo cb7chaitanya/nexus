@@ -29,6 +29,7 @@ import { cleanupKnowledgeBaseProcessor } from "./processors/cleanup-knowledge-ba
 import { embedChunksProcessor } from "./processors/embed-chunks.js";
 import { extractTextProcessor } from "./processors/extract-text.js";
 import { processDocumentProcessor } from "./processors/process-document.js";
+import { sendEmailProcessor } from "./processors/send-email.js";
 import { sweepStuckDocuments } from "./processors/sweep-stuck-documents.js";
 import type { DocumentJobData } from "./processors/types.js";
 import { documentEmbeddingQueue } from "./queue/queues.js";
@@ -188,7 +189,14 @@ async function main(): Promise<void> {
     concurrency: env.WORKER_DOCUMENT_CLEANUP_CONCURRENCY,
   });
 
-  const workers = [processingWorker, extractionWorker, embeddingWorker, sweepWorker, kbCleanupWorker, documentCleanupWorker];
+  // Signup-OTP codes today (apps/api/src/routes/auth.ts), generic enough
+  // for any future transactional email — see processors/send-email.ts.
+  const emailWorker = new Worker(QUEUE_NAMES.email, withJobTimeout(sendEmailProcessor, env.WORKER_MAX_JOB_DURATION_MS), {
+    ...sharedWorkerOptions,
+    concurrency: env.WORKER_EMAIL_CONCURRENCY,
+  });
+
+  const workers = [processingWorker, extractionWorker, embeddingWorker, sweepWorker, kbCleanupWorker, documentCleanupWorker, emailWorker];
 
   // Standalone Queue handles for processing/kb-cleanup/document-cleanup —
   // distinct from the Worker objects above (a BullMQ Worker is a
@@ -206,6 +214,7 @@ async function main(): Promise<void> {
   const documentProcessingQueue = new Queue(QUEUE_NAMES.processing, { connection: redisConnection });
   const kbCleanupQueue = new Queue(QUEUE_NAMES.kbCleanup, { connection: redisConnection });
   const documentCleanupQueue = new Queue(QUEUE_NAMES.documentCleanup, { connection: redisConnection });
+  const emailDeliveryQueue = new Queue(QUEUE_NAMES.email, { connection: redisConnection });
   const allQueues = [
     documentProcessingQueue,
     documentExtractionQueue,
@@ -213,6 +222,7 @@ async function main(): Promise<void> {
     documentSweepQueue,
     kbCleanupQueue,
     documentCleanupQueue,
+    emailDeliveryQueue,
   ];
 
   // registerQueueForMetrics (@raas/metrics) — queueDepth/queueActiveJobs
@@ -358,6 +368,7 @@ async function main(): Promise<void> {
         sweep: env.WORKER_SWEEP_CONCURRENCY,
         kbCleanup: env.WORKER_KB_CLEANUP_CONCURRENCY,
         documentCleanup: env.WORKER_DOCUMENT_CLEANUP_CONCURRENCY,
+        email: env.WORKER_EMAIL_CONCURRENCY,
       },
       maxJobDurationMs: env.WORKER_MAX_JOB_DURATION_MS,
       shutdownTimeoutMs: env.WORKER_SHUTDOWN_TIMEOUT_MS,
@@ -371,10 +382,11 @@ async function main(): Promise<void> {
       stuckDocumentAutoRetry: env.STUCK_DOCUMENT_AUTO_RETRY,
       stuckDocumentMaxAutoRetries: env.STUCK_DOCUMENT_MAX_AUTO_RETRIES,
       embeddingProvider: env.EMBEDDING_PROVIDER,
+      emailProvider: env.EMAIL_PROVIDER,
       alertWebhookConfigured: Boolean(env.ALERT_WEBHOOK_URL),
       healthPort: env.WORKER_HEALTH_PORT,
     },
-    "worker ready — listening on document-processing, document-extraction, document-embedding, document-sweep, kb-cleanup, document-cleanup",
+    "worker ready — listening on document-processing, document-extraction, document-embedding, document-sweep, kb-cleanup, document-cleanup, email-delivery",
   );
 }
 
