@@ -28,6 +28,15 @@ COPY --from=pruner /app/out/json/ .
 RUN pnpm install --frozen-lockfile
 COPY --from=pruner /app/out/full/ .
 ENV NEXT_TELEMETRY_DISABLED=1
+# NEXT_PUBLIC_* vars are inlined into the client bundle at `next build`
+# time, not read at container runtime — a Docker build is sandboxed from
+# the eventual container's runtime env, so this must be explicitly
+# threaded through as a build ARG (Railway auto-populates build ARGs
+# from service variables of the same name when the Dockerfile declares
+# them) or every fetch in apps/web silently falls back to its
+# http://localhost:4000 dev default, baked in permanently until rebuilt.
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 RUN pnpm exec turbo run build --filter=@raas/web
 
 # ---- runtime: just the standalone server output ----
