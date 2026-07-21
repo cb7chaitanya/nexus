@@ -72,7 +72,17 @@ async function main(): Promise<void> {
   initSentry();
 
   const pong = await pingRedisOrFail();
-  logger.info({ redisUrl: env.REDIS_URL, pong, embeddingProvider: env.EMBEDDING_PROVIDER }, "worker connected to redis");
+  // Host/port only, never the full REDIS_URL — it carries the Redis
+  // password (redis://:<password>@host:port) and this line is
+  // structured JSON shipped straight to whatever log aggregator is
+  // configured (see DEPLOYMENT.md's Observability section), same
+  // "never log the secret itself" discipline env.ts's required-secret
+  // checks and the alertWebhookConfigured boolean below already apply.
+  const redisEndpoint = new URL(env.REDIS_URL);
+  logger.info(
+    { redisHost: redisEndpoint.hostname, redisPort: redisEndpoint.port || "6379", pong, embeddingProvider: env.EMBEDDING_PROVIDER },
+    "worker connected to redis",
+  );
 
   // Separate named queues by concern for independent concurrency control
   // (see docs/architecture.md §6.1): document-processing just orchestrates,
