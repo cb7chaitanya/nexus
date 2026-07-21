@@ -44,7 +44,19 @@ export class WebhookNotifier implements Notifier {
       const response = await fetch(this.url, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ event: "job.failed", ...event }),
+        // `content` is additive, purely for chat-style receivers that
+        // require a top-level message field to accept the payload at
+        // all (verified against a real Discord incoming webhook: the
+        // structured fields alone get rejected with "Cannot send an
+        // empty message" since Discord looks for content/embeds/file
+        // specifically) — every existing field is unchanged, so a
+        // receiver that only reads the structured shape (the documented
+        // "small relay function" case) is unaffected.
+        body: JSON.stringify({
+          event: "job.failed",
+          content: `Job ${event.jobName} (${event.jobId}) in queue ${event.queueName} permanently failed after ${event.retryCount} attempt(s): ${event.failureReason}`,
+          ...event,
+        }),
         signal: AbortSignal.timeout(this.timeoutMs),
       });
 
