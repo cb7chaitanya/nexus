@@ -10,6 +10,12 @@ export type { OpenAIChatProviderOptions } from "./llm/openai.js";
 export { FakeLLMProvider } from "./llm/fake.js";
 export type { FakeLLMProviderOptions } from "./llm/fake.js";
 
+export type { EmailProvider, SendEmailParams } from "./email/types.js";
+export { ResendEmailProvider, ResendEmailError } from "./email/resend.js";
+export type { ResendEmailProviderOptions } from "./email/resend.js";
+export { FakeEmailProvider } from "./email/fake.js";
+export type { FakeEmailProviderOptions } from "./email/fake.js";
+
 export { CircuitBreaker, CircuitBreakerOpenError } from "./resilience/circuit-breaker.js";
 export type { CircuitBreakerOptions, CircuitState } from "./resilience/circuit-breaker.js";
 export { TimeoutError, withTimeout } from "./resilience/timeout.js";
