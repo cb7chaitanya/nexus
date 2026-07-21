@@ -43,6 +43,11 @@ export const env = {
   WEB_ORIGIN: process.env.WEB_ORIGIN ?? "http://localhost:3000",
   SESSION_JWT_SECRET: requireEnv("SESSION_JWT_SECRET"),
   SESSION_TTL_SECONDS: Number(process.env.SESSION_TTL_SECONDS ?? 60 * 60 * 24 * 7),
+  // Optional — see lib/cookies.ts's setSessionCookie for the full
+  // explanation. Only needed when apps/web and apps/api are deployed on
+  // different (sibling/parent-child) subdomains; unset is correct and
+  // sufficient for local dev and any single-host deployment.
+  SESSION_COOKIE_DOMAIN: process.env.SESSION_COOKIE_DOMAIN,
   // Signup is gated on a 6-digit OTP emailed to the address given — see
   // lib/pending-signup.ts. How long a pending (unconfirmed) signup lives
   // in Redis before it must be restarted, and how many wrong-code guesses

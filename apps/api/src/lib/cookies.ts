@@ -9,12 +9,30 @@ export function setSessionCookie(reply: FastifyReply, token: string): void {
     secure: env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
+    // Unset (default) means host-only — correct when apps/web and
+    // apps/api share the exact same hostname (local dev: both on
+    // "localhost", just different ports — cookies aren't port-scoped, so
+    // this already works with no Domain attribute at all). Deployments
+    // that split web/api across sibling/parent-child subdomains (e.g.
+    // web on app.example.com, api on api.app.example.com) MUST set this
+    // to the shared parent (here, app.example.com) — otherwise apps/web's
+    // own server-side session check (getServerSession, which reads
+    // cookies sent to ITS OWN host) never sees a cookie that was scoped
+    // only to the API's host, even though direct browser->API calls work
+    // fine. A cookie's Domain can only be set to the response host itself
+    // or one of its parent domains, never a sibling or child — so this
+    // only works when the API host is (or is under) the web host, not the
+    // other way around or unrelated domains entirely.
+    domain: env.SESSION_COOKIE_DOMAIN,
     maxAge: env.SESSION_TTL_SECONDS,
   });
 }
 
 export function clearSessionCookie(reply: FastifyReply): void {
-  reply.clearCookie(SESSION_COOKIE_NAME, { path: "/" });
+  // Must match the original Set-Cookie's Domain exactly, or the browser
+  // treats this as clearing a different (host-only) cookie and leaves the
+  // real, domain-scoped session cookie behind.
+  reply.clearCookie(SESSION_COOKIE_NAME, { path: "/", domain: env.SESSION_COOKIE_DOMAIN });
 }
 
 export const GOOGLE_OAUTH_STATE_COOKIE = "google_oauth_state";
