@@ -24,6 +24,14 @@ export const MAX_UPLOAD_SIZE_BYTES = 1 * 1024 * 1024 * 1024;
 // far beyond what a real single document should ever legitimately need.
 export const MAX_CHUNKS_PER_DOCUMENT = 1000;
 
+// MVP: PDF is the entire supported data source (docs/decisions.md — "PDF
+// upload is the entire MVP data source"; docs/architecture.md §4.1 —
+// extraction is deliberately factored behind an interface so DOCX/HTML/
+// TXT/Markdown are additive later, not built yet). One source of truth so
+// the presign-time check (packages/shared) and the worker's own extraction
+// check (apps/worker) can't drift apart on the accepted type.
+export const SUPPORTED_DOCUMENT_MIME_TYPES = ["application/pdf"] as const;
+
 // BullMQ queue/job names shared by apps/api (enqueues the flow after
 // POST /documents/:id/complete) and apps/worker (defines the processors
 // that consume it) — kept in one place so the two apps can't drift apart

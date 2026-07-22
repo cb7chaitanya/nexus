@@ -1,4 +1,5 @@
 import { withTenantTransaction } from "@raas/db";
+import { SUPPORTED_DOCUMENT_MIME_TYPES } from "@raas/shared";
 import { UnrecoverableError, type Job } from "bullmq";
 
 import { env } from "../env.js";
@@ -32,8 +33,14 @@ export async function extractTextProcessor(job: Job<DocumentJobData>): Promise<E
       return tx.document.update({ where: { id: documentId }, data: { status: "PROCESSING" } });
     });
 
-    if (document.mimeType !== "application/pdf") {
-      throw new DocumentValidationError(`Unsupported file type "${document.mimeType}" — only application/pdf is supported`);
+    // Same allowlist presign-time validation already enforces
+    // (packages/shared/src/schemas/documents.ts) — this is a defense-in-depth
+    // backstop, not the primary gate: a document queued before this deploy,
+    // or reaching this stage some other way, still can't slip past extraction.
+    if (!(SUPPORTED_DOCUMENT_MIME_TYPES as readonly string[]).includes(document.mimeType)) {
+      throw new DocumentValidationError(
+        `Unsupported file type "${document.mimeType}" — only ${SUPPORTED_DOCUMENT_MIME_TYPES.join(", ")} is supported`,
+      );
     }
 
     // Worker-operational memory guardrail (see env.ts's

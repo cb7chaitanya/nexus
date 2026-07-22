@@ -6,7 +6,7 @@ export {
   type ApiErrorResponseBody,
 } from "./errors.js";
 export { parseOrThrow } from "./validate.js";
-export { MAX_UPLOAD_SIZE_BYTES, MAX_CHUNKS_PER_DOCUMENT, PLATFORM_EMBEDDING_DIM, QUEUE_NAMES, JOB_NAMES } from "./constants.js";
+export { MAX_UPLOAD_SIZE_BYTES, MAX_CHUNKS_PER_DOCUMENT, SUPPORTED_DOCUMENT_MIME_TYPES, PLATFORM_EMBEDDING_DIM, QUEUE_NAMES, JOB_NAMES } from "./constants.js";
 export {
   emailSchema,
   loginSchema,

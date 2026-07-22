@@ -36,8 +36,8 @@ async function presignDocument(
     cookies: { [SESSION_COOKIE_NAME]: sessionCookie },
     payload: {
       organizationId,
-      fileName: "report.txt",
-      mimeType: "text/plain",
+      fileName: "report.pdf",
+      mimeType: "application/pdf",
       sizeBytes,
     },
   });
@@ -52,7 +52,7 @@ async function presignDocument(
  * that does a real upload) PUTs the raw body directly to `uploadUrl` with
  * a matching Content-Type header — no multipart form, no fields.
  */
-async function uploadToPresignedUrl(uploadUrl: string, body: string, contentType = "text/plain"): Promise<Response> {
+async function uploadToPresignedUrl(uploadUrl: string, body: string, contentType = "application/pdf"): Promise<Response> {
   return fetch(uploadUrl, { method: "PUT", headers: { "Content-Type": contentType }, body });
 }
 
@@ -79,8 +79,8 @@ async function createDocumentRow(
       data: {
         organizationId,
         knowledgeBaseId,
-        fileName: "test.txt",
-        mimeType: "text/plain",
+        fileName: "test.pdf",
+        mimeType: "application/pdf",
         sizeBytes: 10,
         storageKey,
         status,
@@ -130,6 +130,18 @@ describe("document routes", () => {
     await prisma.user.deleteMany({ where: { email: { contains: suffix } } });
     await prisma.organization.deleteMany({ where: { slug: { contains: suffix } } });
     await redis.quit();
+  });
+
+  it("rejects presigning an unsupported file type before any upload happens", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: `/kb/${knowledgeBaseId}/documents/presign`,
+      cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      payload: { organizationId, fileName: "notes.md", mimeType: "text/markdown", sizeBytes: 64 },
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(response.json().error.code).toBe("VALIDATION_ERROR");
   });
 
   it("rejects completing a document whose object was never actually uploaded", async () => {
