@@ -137,11 +137,58 @@ describe("document routes", () => {
       method: "POST",
       url: `/kb/${knowledgeBaseId}/documents/presign`,
       cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
-      payload: { organizationId, fileName: "notes.md", mimeType: "text/markdown", sizeBytes: 64 },
+      payload: { organizationId, fileName: "notes.zip", mimeType: "application/zip", sizeBytes: 64 },
     });
 
     expect(response.statusCode).toBe(422);
     expect(response.json().error.code).toBe("VALIDATION_ERROR");
+  });
+
+  describe("presigning newly-supported file types", () => {
+    // Own fresh org, same reason the "daily document processing quota"
+    // tests below give themselves one — four more real presign calls
+    // against the shared org above would eat into
+    // RATE_LIMIT_INGESTION_ORG_RPM headroom later tests in this file
+    // depend on.
+    let formatsOrgId: string;
+    let formatsOwnerCookie: string;
+    let formatsKbId: string;
+
+    beforeAll(async () => {
+      const org = await signup(app, `doc-formats-${suffix}@example.com`, password, `Doc Formats Org ${suffix}`);
+      formatsOrgId = org.organizationId;
+      formatsOwnerCookie = org.sessionCookie;
+
+      const kbResponse = await app.inject({
+        method: "POST",
+        url: "/kb",
+        cookies: { [SESSION_COOKIE_NAME]: formatsOwnerCookie },
+        payload: {
+          organizationId: formatsOrgId,
+          name: "Formats KB",
+          embeddingProvider: "openai",
+          embeddingModel: "text-embedding-3-small",
+          embeddingDim: PLATFORM_EMBEDDING_DIM,
+        },
+      });
+      formatsKbId = kbResponse.json().id;
+    });
+
+    it.each([
+      ["notes.txt", "text/plain"],
+      ["notes.md", "text/markdown"],
+      ["notes.html", "text/html"],
+      ["report.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+    ])("accepts presigning a %s file", async (fileName, mimeType) => {
+      const response = await app.inject({
+        method: "POST",
+        url: `/kb/${formatsKbId}/documents/presign`,
+        cookies: { [SESSION_COOKIE_NAME]: formatsOwnerCookie },
+        payload: { organizationId: formatsOrgId, fileName, mimeType, sizeBytes: 64 },
+      });
+
+      expect(response.statusCode).toBe(201);
+    });
   });
 
   it("rejects completing a document whose object was never actually uploaded", async () => {
