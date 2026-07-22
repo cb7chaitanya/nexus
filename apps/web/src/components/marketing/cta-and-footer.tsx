@@ -34,7 +34,7 @@ export function SiteFooter() {
             Production-grade retrieval infrastructure for AI products.
           </p>
         </div>
-        <div className="flex gap-16 text-sm">
+        <div className="flex gap-12 text-sm sm:gap-16">
           <div>
             <p className="font-medium text-foreground">Product</p>
             <ul className="mt-3 space-y-2 text-muted-foreground">
@@ -46,6 +46,16 @@ export function SiteFooter() {
               <li>
                 <a href="#how-it-works" className="transition-colors hover:text-foreground">
                   How it works
+                </a>
+              </li>
+              <li>
+                <a href="#architecture" className="transition-colors hover:text-foreground">
+                  Architecture
+                </a>
+              </li>
+              <li>
+                <a href="#pricing" className="transition-colors hover:text-foreground">
+                  Pricing
                 </a>
               </li>
             </ul>

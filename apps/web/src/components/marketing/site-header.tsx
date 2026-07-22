@@ -17,6 +17,9 @@ export function SiteHeader() {
           <a href="#how-it-works" className="transition-colors hover:text-foreground">
             How it works
           </a>
+          <a href="#pricing" className="transition-colors hover:text-foreground">
+            Pricing
+          </a>
         </nav>
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="sm" asChild>

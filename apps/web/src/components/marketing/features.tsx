@@ -9,24 +9,27 @@ import {
 
 import { Card } from "@/components/ui/card";
 
-const features = [
-  {
-    icon: UploadCloudIcon,
-    title: "Ingest in seconds",
-    description:
-      "Drag in PDFs and documents. Chunking, embedding, and indexing happen automatically in the background.",
-  },
+const storyFeatures = [
   {
     icon: MessagesSquareIcon,
     title: "Grounded, cited chat",
     description:
-      "Every answer streams in real time and links back to the exact source passages it was built from.",
+      "Every answer streams in real time and links back to the exact source passages it was built from — not a paraphrase, the actual quote and page.",
   },
   {
     icon: DatabaseIcon,
     title: "Isolated knowledge bases",
     description:
-      "Organize documents into knowledge bases per product, team, or customer with independent retrieval scopes.",
+      "Organize documents into knowledge bases per product, team, or customer, each with its own independent retrieval scope — nothing bleeds across boundaries.",
+  },
+];
+
+const supportingFeatures = [
+  {
+    icon: UploadCloudIcon,
+    title: "Ingest in seconds",
+    description:
+      "Drag in PDFs and documents. Chunking, embedding, and indexing happen automatically in the background.",
   },
   {
     icon: UsersIcon,
@@ -60,8 +63,21 @@ export function Features() {
             Focus on your product. We handle the retrieval infrastructure underneath it.
           </p>
         </div>
-        <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {features.map((feature) => (
+
+        <div className="mt-12 grid gap-6 lg:grid-cols-2">
+          {storyFeatures.map((feature) => (
+            <Card key={feature.title} interactive className="gap-0 p-8">
+              <div className="flex size-11 items-center justify-center rounded-lg bg-accent text-accent-foreground">
+                <feature.icon className="size-5" />
+              </div>
+              <h3 className="mt-5 text-lg font-semibold">{feature.title}</h3>
+              <p className="mt-2 text-sm text-muted-foreground">{feature.description}</p>
+            </Card>
+          ))}
+        </div>
+
+        <div className="mt-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+          {supportingFeatures.map((feature) => (
             <Card key={feature.title} interactive className="gap-0 p-6">
               <div className="flex size-9 items-center justify-center rounded-lg bg-accent text-accent-foreground">
                 <feature.icon className="size-4.5" />
