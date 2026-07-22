@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { DatabaseIcon, PlusIcon, SearchIcon } from "lucide-react";
 
@@ -16,8 +17,20 @@ import { Input } from "@/components/ui/input";
 
 export default function KnowledgeBasesPage() {
   const { currentOrganization } = useSession();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [createOpen, setCreateOpen] = useState(false);
   const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    if (searchParams.get("create") === "1") {
+      setCreateOpen(true);
+      router.replace("/kb");
+    }
+    // Only react to the query param on arrival — router/searchParams identity
+    // changes on every navigation and would otherwise re-fire this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   const knowledgeBases = useKnowledgeBases(currentOrganization.id);
 

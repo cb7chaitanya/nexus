@@ -2,11 +2,19 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { motion } from "framer-motion";
 
 import { cn } from "@/lib/utils";
 import { primaryNavItems } from "@/components/layout/nav-config";
 
-export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
+export function SidebarNav({
+  onNavigate,
+  scope = "desktop",
+}: {
+  onNavigate?: () => void;
+  /** Distinguishes the desktop sidebar from the mobile sheet's copy, which mount simultaneously — a shared layoutId across both would fight over the same shared-element animation. */
+  scope?: "desktop" | "mobile";
+}) {
   const pathname = usePathname();
 
   return (
@@ -26,7 +34,11 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
             )}
           >
             {active && (
-              <span className="absolute -left-3 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-primary" />
+              <motion.span
+                layoutId={`sidebar-active-rail-${scope}`}
+                transition={{ type: "spring", stiffness: 500, damping: 40 }}
+                className="absolute -left-3 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-primary"
+              />
             )}
             <item.icon className="size-4" />
             {item.label}

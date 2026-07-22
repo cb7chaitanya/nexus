@@ -77,7 +77,7 @@ export function CommandPalette({
 
         <CommandSeparator />
         <CommandGroup heading="Actions">
-          <CommandItem value="new knowledge base create" onSelect={() => go("/kb")}>
+          <CommandItem value="new knowledge base create" onSelect={() => go("/kb?create=1")}>
             <PlusIcon /> New knowledge base
           </CommandItem>
         </CommandGroup>

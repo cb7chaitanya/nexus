@@ -9,6 +9,7 @@ import { OrgSwitcher } from "@/components/layout/org-switcher";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
 import { UserMenu } from "@/components/layout/user-menu";
 import { CommandPalette } from "@/components/layout/command-palette";
+import { PageTransition } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@/components/ui/visually-hidden";
@@ -32,9 +33,11 @@ function CommandPaletteTrigger({ onOpen }: { onOpen: () => void }) {
 function SidebarContents({
   onNavigate,
   onOpenCommandPalette,
+  scope,
 }: {
   onNavigate?: () => void;
   onOpenCommandPalette: () => void;
+  scope: "desktop" | "mobile";
 }) {
   return (
     <div className="flex h-full flex-col gap-4 py-4">
@@ -48,7 +51,7 @@ function SidebarContents({
         <CommandPaletteTrigger onOpen={onOpenCommandPalette} />
       </div>
       <div className="flex-1 overflow-y-auto">
-        <SidebarNav onNavigate={onNavigate} />
+        <SidebarNav onNavigate={onNavigate} scope={scope} />
       </div>
       <div className="px-3">
         <UserMenu />
@@ -75,7 +78,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen bg-background">
       <aside className="hidden w-64 shrink-0 border-r border-sidebar-border bg-sidebar md:block">
-        <SidebarContents onOpenCommandPalette={() => setCommandOpen(true)} />
+        <SidebarContents scope="desktop" onOpenCommandPalette={() => setCommandOpen(true)} />
       </aside>
 
       <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
@@ -84,6 +87,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <SheetTitle>Navigation</SheetTitle>
           </VisuallyHidden>
           <SidebarContents
+            scope="mobile"
             onNavigate={() => setMobileNavOpen(false)}
             onOpenCommandPalette={() => {
               setMobileNavOpen(false);
@@ -107,7 +111,9 @@ export function AppShell({ children }: { children: ReactNode }) {
             <SearchIcon className="size-4" />
           </button>
         </header>
-        <main className="flex-1 overflow-y-auto">{children}</main>
+        <main className="flex-1 overflow-y-auto">
+          <PageTransition>{children}</PageTransition>
+        </main>
       </div>
 
       <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} />
