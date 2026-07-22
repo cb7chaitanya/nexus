@@ -157,6 +157,14 @@ describe("chat route", () => {
     const citations = (citationEvents[0]!.data as { citations: Array<Record<string, unknown>> }).citations;
     expect(citations).toEqual([{ refId: "c1", chunkId, documentId, pageNumber: 3, quote: expect.any(String) }]);
     expect((citations[0]!.quote as string).length).toBeGreaterThan(0);
+
+    // Regression test: this route calls reply.hijack() and writes headers
+    // straight to reply.raw, which bypasses the send() pipeline
+    // @fastify/cors relies on to flush Access-Control-Allow-* — a browser
+    // request to this exact route silently fails CORS even though the
+    // request succeeds server-side if these are missing.
+    expect(response.headers["access-control-allow-origin"]).toBe(env.WEB_ORIGIN);
+    expect(response.headers["access-control-allow-credentials"]).toBe("true");
   });
 
   it("never holds a Postgres transaction open while the embedding provider or reranker call is in flight (regression test for the transaction-boundary fix)", async () => {

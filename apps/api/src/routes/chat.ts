@@ -126,6 +126,21 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
     // a provider timeout (see settleChatTokenUsage's call sites).
     const reservation = await reserveChatTokenBudget(input.organizationId, estimateChatReservation(promptText, env.MAX_COMPLETION_TOKENS), reply);
 
+    // CORS: @fastify/cors stages Access-Control-Allow-Origin/-Credentials
+    // via reply.header(), which only ever gets flushed onto the response
+    // by Fastify's own send() pipeline — the same trap lib/rate-limit.ts's
+    // applyHeaders already documents and works around. reply.hijack()
+    // below skips that pipeline entirely, so without this, every browser
+    // request to this route is silently missing its CORS headers and
+    // fails with "No 'Access-Control-Allow-Origin' header is present" even
+    // though the request itself succeeded server-side. env.WEB_ORIGIN is
+    // used directly (not reflecting the request's Origin header) because
+    // that's exactly what @fastify/cors resolves to for a static string
+    // origin config (see app.ts's registration) — this just replicates it
+    // on the one path that bypasses the plugin's own header flush.
+    reply.raw.setHeader("Access-Control-Allow-Origin", env.WEB_ORIGIN);
+    reply.raw.setHeader("Access-Control-Allow-Credentials", "true");
+
     // From here on the response is committed to SSE — reply.hijack() tells
     // Fastify not to touch the response itself, since we're writing to the
     // raw http.ServerResponse directly.
