@@ -3,12 +3,16 @@
 import { useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { CheckIcon, FileIcon, UploadCloudIcon, XIcon } from "lucide-react";
+import { SUPPORTED_DOCUMENT_MIME_TYPES } from "@raas/shared";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
 import { useUploadDocument } from "@/hooks/use-documents";
 import { isApiError } from "@/lib/api-error";
 import { Progress } from "@/components/ui/progress";
+
+const ACCEPT = SUPPORTED_DOCUMENT_MIME_TYPES.join(",");
+const SUPPORTED_TYPES = new Set<string>(SUPPORTED_DOCUMENT_MIME_TYPES);
 
 interface UploadItem {
   id: string;
@@ -35,6 +39,20 @@ export function UploadDropzone({
 
     for (const file of Array.from(fileList)) {
       const id = crypto.randomUUID();
+
+      // Checked client-side before any network call — the API rejects this
+      // too (at presign), but failing here means no upload is even
+      // attempted for a file that can never succeed, instead of a
+      // multi-second "uploading…" bar that only then errors out.
+      if (!SUPPORTED_TYPES.has(file.type)) {
+        setItems((prev) => [
+          ...prev,
+          { id, name: file.name, status: "error", progress: 0, error: "Only PDF files are supported" },
+        ]);
+        toast.error(`${file.name}: Only PDF files are supported`);
+        continue;
+      }
+
       setItems((prev) => [...prev, { id, name: file.name, status: "uploading", progress: 0 }]);
 
       uploadDocument.mutate(
@@ -93,11 +111,12 @@ export function UploadDropzone({
           className={cn("size-6 transition-transform duration-200", isDragging ? "scale-110 text-primary" : "text-muted-foreground")}
         />
         <p className="mt-3 text-sm font-medium">Drop files to upload, or click to browse</p>
-        <p className="mt-1 text-xs text-muted-foreground">PDF, TXT, Markdown, and more · up to 1 GB per file</p>
+        <p className="mt-1 text-xs text-muted-foreground">PDF only · up to 1 GB per file</p>
         <input
           ref={inputRef}
           type="file"
           multiple
+          accept={ACCEPT}
           className="hidden"
           onChange={(e) => {
             handleFiles(e.target.files);
