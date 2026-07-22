@@ -4,7 +4,7 @@ import { EventName } from "@paddle/paddle-node-sdk";
 import type { FastifyInstance } from "fastify";
 
 import { env } from "../env.js";
-import { paddle } from "../lib/paddle-client.js";
+import { getPaddleClient } from "../lib/paddle-client.js";
 import { requireMembership } from "../lib/membership.js";
 import { requireAuth } from "../plugins/auth-guard.js";
 
@@ -66,7 +66,7 @@ export async function billingRoutes(app: FastifyInstance): Promise<void> {
 
       let event;
       try {
-        event = await paddle.webhooks.unmarshal(rawBody, env.PADDLE_WEBHOOK_SECRET!, signature);
+        event = await getPaddleClient().webhooks.unmarshal(rawBody, env.PADDLE_WEBHOOK_SECRET!, signature);
       } catch (err) {
         // Invalid/unverifiable signature — never trusted, regardless of
         // what the payload claims. No requireAuth on this route at all;
@@ -134,7 +134,7 @@ export async function billingRoutes(app: FastifyInstance): Promise<void> {
       throw ApiError.conflict("This organization has no active Paddle subscription to manage");
     }
 
-    const session = await paddle.customerPortalSessions.create(org.paddleCustomerId, [org.paddleSubscriptionId]);
+    const session = await getPaddleClient().customerPortalSessions.create(org.paddleCustomerId, [org.paddleSubscriptionId]);
     reply.send({ url: session.urls.general.overview });
   });
 }
