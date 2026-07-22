@@ -24,11 +24,12 @@ export function Hero() {
             <SparkleIcon /> Retrieval-augmented answers, hosted for you
           </Badge>
           <h1 className="text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
-            Turn your documents into a trustworthy AI answer engine
+            Production-grade retrieval infrastructure for AI products.
           </h1>
           <p className="mt-5 max-w-lg text-lg text-muted-foreground text-pretty">
-            Upload your knowledge base, get a production-ready chat API with citations,
-            streaming, and usage controls — no vector database or ML pipeline to build.
+            Ingest documents, generate grounded answers with citations, and ship a
+            retrieval API in minutes — not a vector database and ingestion pipeline
+            you have to build and operate yourself.
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <Button size="lg" asChild>

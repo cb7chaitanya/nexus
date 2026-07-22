@@ -7,6 +7,8 @@ import {
   UsersIcon,
 } from "lucide-react";
 
+import { Card } from "@/components/ui/card";
+
 const features = [
   {
     icon: UploadCloudIcon,
@@ -60,16 +62,13 @@ export function Features() {
         </div>
         <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {features.map((feature) => (
-            <div
-              key={feature.title}
-              className="rounded-xl border border-border bg-card p-6 transition-colors hover:border-primary/30"
-            >
+            <Card key={feature.title} interactive className="gap-0 p-6">
               <div className="flex size-9 items-center justify-center rounded-lg bg-accent text-accent-foreground">
                 <feature.icon className="size-4.5" />
               </div>
               <h3 className="mt-4 text-sm font-semibold">{feature.title}</h3>
               <p className="mt-1.5 text-sm text-muted-foreground">{feature.description}</p>
-            </div>
+            </Card>
           ))}
         </div>
       </div>
