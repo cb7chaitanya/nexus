@@ -125,6 +125,7 @@ export function ChatView({
                     key={message.id}
                     message={message}
                     fileNames={fileNames}
+                    knowledgeBaseId={knowledgeBase.id}
                     isLast={message.id === lastMessage?.id}
                     onRegenerate={message.role === "ASSISTANT" ? retryLastMessage : undefined}
                   />

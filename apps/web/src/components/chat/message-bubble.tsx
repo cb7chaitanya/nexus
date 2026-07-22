@@ -13,11 +13,13 @@ import type { DisplayMessage } from "@/hooks/use-chat";
 export function MessageBubble({
   message,
   fileNames,
+  knowledgeBaseId,
   isLast = false,
   onRegenerate,
 }: {
   message: DisplayMessage;
   fileNames?: Record<string, string>;
+  knowledgeBaseId: string;
   isLast?: boolean;
   onRegenerate?: () => void;
 }) {
@@ -56,7 +58,11 @@ export function MessageBubble({
                 <span className="animate-caret-blink ml-0.5 inline-block h-3.5 w-[2px] translate-y-0.5 bg-current align-middle" />
               )}
             </div>
-            <CitationList citations={message.citations} fileNames={fileNames} />
+            <CitationList
+              citations={message.citations}
+              fileNames={fileNames}
+              knowledgeBaseId={knowledgeBaseId}
+            />
           </>
         )}
         {!message.pending && message.content.length > 0 && (
