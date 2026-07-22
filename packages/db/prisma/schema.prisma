@@ -56,14 +56,27 @@ model Organization {
   name      String
   slug      String   @unique
   // free | pro | enterprise — billing-reconciliation-owned: written only by
-  // the (not-yet-built) payment-webhook/billing-sync path, never by a
+  // apps/api/src/routes/billing.ts's Paddle webhook handler, never by a
   // member-facing route. apps/api/src/routes/organizations.ts's PATCH
-  // /organizations/:id — the only mutation route touching this model —
-  // deliberately has no code path that can set this field, for any role;
-  // see packages/shared/src/schemas/organizations.ts's updateOrganizationSchema.
-  // Until that billing-sync path exists, this column only ever changes via
-  // a direct DB write (a manual/support action), never through the API.
+  // /organizations/:id — the only member-facing mutation route touching
+  // this model — deliberately has no code path that can set this field,
+  // for any role; see packages/shared/src/schemas/organizations.ts's
+  // updateOrganizationSchema.
   plan      String   @default("free")
+  // Paddle linkage — all nullable, since a free-plan org that's never
+  // subscribed has none of these. Only ever written by the webhook handler.
+  paddleCustomerId     String?
+  paddleSubscriptionId String?
+  // Paddle's own status strings verbatim (active, canceled, past_due,
+  // paused, ...) — not remapped to a local enum, so a Paddle status this
+  // app doesn't yet have special handling for still gets stored accurately
+  // rather than coerced into the nearest known value.
+  subscriptionStatus String?
+  // The webhook event's own occurred_at, NOT this row's updatedAt — Paddle
+  // does not guarantee webhook delivery order, so this is the guard that
+  // stops a late-arriving stale event from clobbering newer state (only
+  // applied when the incoming event's occurred_at is newer than this).
+  subscriptionUpdatedAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
