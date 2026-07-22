@@ -162,6 +162,21 @@ export const env = {
   // required: error tracking is an operational nice-to-have, not
   // load-bearing for this process to start and serve traffic.
   SENTRY_DSN: process.env.SENTRY_DSN,
+  // Paddle billing — optional like GOOGLE_CLIENT_ID/SECRET above, same
+  // reasoning: the app is fully usable with none of this set (routes.ts
+  // only registers billingRoutes when PADDLE_API_KEY is present, see
+  // routes/billing.ts), so local dev/tests never need a real Paddle
+  // account. See the all-or-nothing check below this object.
+  PADDLE_API_KEY: process.env.PADDLE_API_KEY,
+  PADDLE_WEBHOOK_SECRET: process.env.PADDLE_WEBHOOK_SECRET,
+  // "sandbox" default is deliberate — accidentally pointing an unconfigured
+  // deployment at real Paddle production would be a much worse failure
+  // mode than accidentally staying in sandbox.
+  PADDLE_ENVIRONMENT: (process.env.PADDLE_ENVIRONMENT ?? "sandbox") as "sandbox" | "production",
+  // The Pro tier's Paddle Price ID (pri_...) — created in the Paddle
+  // dashboard, not something this app generates. Maps a checkout/
+  // subscription back to our own "pro" plan value in routes/billing.ts.
+  PADDLE_PRO_PRICE_ID: process.env.PADDLE_PRO_PRICE_ID,
 };
 
 // Half-configured Google OAuth (one of the two set, not both) is almost
@@ -170,4 +185,14 @@ export const env = {
 // "Continue with Google".
 if (Boolean(env.GOOGLE_CLIENT_ID) !== Boolean(env.GOOGLE_CLIENT_SECRET)) {
   throw new Error("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must both be set, or both left unset. Refusing to start.");
+}
+
+// Same all-or-nothing discipline as Google OAuth above, extended to three
+// fields — any one of these set without the other two is almost certainly
+// a partially-completed setup, not an intentional configuration.
+const paddleFieldsSet = [env.PADDLE_API_KEY, env.PADDLE_WEBHOOK_SECRET, env.PADDLE_PRO_PRICE_ID].map(Boolean);
+if (new Set(paddleFieldsSet).size > 1) {
+  throw new Error(
+    "PADDLE_API_KEY, PADDLE_WEBHOOK_SECRET, and PADDLE_PRO_PRICE_ID must all be set, or all left unset. Refusing to start.",
+  );
 }

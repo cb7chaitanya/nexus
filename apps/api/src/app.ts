@@ -13,6 +13,7 @@ import { registerErrorHandler } from "./plugins/error-handler.js";
 import { registerMetrics } from "./plugins/metrics.js";
 import { apiKeyRoutes } from "./routes/api-keys.js";
 import { authRoutes } from "./routes/auth.js";
+import { billingRoutes } from "./routes/billing.js";
 import { chatRoutes } from "./routes/chat.js";
 import { conversationRoutes } from "./routes/conversations.js";
 import { documentRoutes } from "./routes/documents.js";
@@ -158,6 +159,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(chatRoutes);
   await app.register(conversationRoutes);
   await app.register(usageRoutes);
+  await app.register(billingRoutes);
   await app.register(v1Routes);
 
   return app;

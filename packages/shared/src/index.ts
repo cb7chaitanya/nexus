@@ -76,3 +76,5 @@ export { cursorPaginationSchema } from "./schemas/pagination.js";
 export type { CursorPaginationQuery } from "./schemas/pagination.js";
 export { getUsageQuerySchema } from "./schemas/usage.js";
 export type { GetUsageQuery } from "./schemas/usage.js";
+export { createPortalSessionSchema } from "./schemas/billing.js";
+export type { CreatePortalSessionInput } from "./schemas/billing.js";
