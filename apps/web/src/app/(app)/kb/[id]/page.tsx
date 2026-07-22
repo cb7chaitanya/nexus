@@ -20,12 +20,14 @@ import { useDocuments } from "@/hooks/use-documents";
 import { PageHeader } from "@/components/layout/page-header";
 import { UploadDropzone } from "@/components/kb/upload-dropzone";
 import { DocumentsTable } from "@/components/kb/documents-table";
+import { DocumentActivityTimeline } from "@/components/kb/document-activity-timeline";
 import { RenameKnowledgeBaseDialog } from "@/components/kb/rename-knowledge-base-dialog";
 import { DeleteKnowledgeBaseDialog } from "@/components/kb/delete-knowledge-base-dialog";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -130,22 +132,35 @@ export default function KnowledgeBaseDetailPage({
           <UploadDropzone knowledgeBaseId={id} organizationId={currentOrganization.id} />
         </section>
 
-        <section>
-          <h2 className="mb-3 text-sm font-semibold">Documents</h2>
-          {documents.isLoading ? (
-            <Skeleton className="h-48 w-full rounded-xl" />
-          ) : docs.length === 0 ? (
-            <EmptyState
-              icon={FileTextIcon}
-              title="No documents yet"
-              description="Upload PDFs or text files above to start building this knowledge base."
-            />
-          ) : (
-            <div className="overflow-hidden rounded-xl border border-border">
-              <DocumentsTable documents={docs} knowledgeBaseId={id} organizationId={currentOrganization.id} />
-            </div>
+        <div className="grid gap-8 lg:grid-cols-3">
+          <section className="lg:col-span-2">
+            <h2 className="mb-3 text-sm font-semibold">Documents</h2>
+            {documents.isLoading ? (
+              <Skeleton className="h-48 w-full rounded-xl" />
+            ) : docs.length === 0 ? (
+              <EmptyState
+                icon={FileTextIcon}
+                title="No documents yet"
+                description="Upload PDFs or text files above to start building this knowledge base."
+              />
+            ) : (
+              <div className="overflow-hidden rounded-xl border border-border">
+                <DocumentsTable documents={docs} knowledgeBaseId={id} organizationId={currentOrganization.id} />
+              </div>
+            )}
+          </section>
+
+          {!documents.isLoading && docs.length > 0 && (
+            <section>
+              <h2 className="mb-3 text-sm font-semibold">Recent activity</h2>
+              <Card className="py-4">
+                <CardContent>
+                  <DocumentActivityTimeline documents={docs} />
+                </CardContent>
+              </Card>
+            </section>
           )}
-        </section>
+        </div>
       </div>
 
       <RenameKnowledgeBaseDialog

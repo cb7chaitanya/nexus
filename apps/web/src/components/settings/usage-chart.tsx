@@ -3,18 +3,11 @@
 import { useMemo } from "react";
 import { format } from "date-fns";
 
+import { aggregateDailyUsage } from "@/lib/usage";
 import type { UsageBreakdownRow } from "@/lib/types";
 
 export function UsageChart({ breakdown }: { breakdown: UsageBreakdownRow[] }) {
-  const daily = useMemo(() => {
-    const byDate = new Map<string, number>();
-    for (const row of breakdown) {
-      byDate.set(row.date, (byDate.get(row.date) ?? 0) + row.tokens);
-    }
-    return Array.from(byDate.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .slice(-30);
-  }, [breakdown]);
+  const daily = useMemo(() => aggregateDailyUsage(breakdown, 30), [breakdown]);
 
   const max = Math.max(1, ...daily.map(([, tokens]) => tokens));
 

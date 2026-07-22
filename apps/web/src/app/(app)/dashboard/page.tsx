@@ -3,13 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import {
-  ArrowRightIcon,
-  DatabaseIcon,
-  MessagesSquareIcon,
-  PlusIcon,
-  ZapIcon,
-} from "lucide-react";
+import { ArrowRightIcon, DatabaseIcon, MessagesSquareIcon, PlusIcon } from "lucide-react";
 
 import { useSession } from "@/lib/session-context";
 import { useKnowledgeBase, useKnowledgeBases } from "@/hooks/use-knowledge-bases";
@@ -17,6 +11,8 @@ import { useConversations } from "@/hooks/use-conversations";
 import { useUsage } from "@/hooks/use-usage";
 import { PageHeader } from "@/components/layout/page-header";
 import { StatCard } from "@/components/dashboard/stat-card";
+import { SystemHealthStrip } from "@/components/dashboard/system-health-strip";
+import { UsageSummaryCard } from "@/components/dashboard/usage-summary-card";
 import { GettingStartedChecklist } from "@/components/dashboard/getting-started-checklist";
 import { KnowledgeBaseCard } from "@/components/kb/knowledge-base-card";
 import { CreateKnowledgeBaseDialog } from "@/components/kb/create-knowledge-base-dialog";
@@ -73,26 +69,35 @@ export default function DashboardPage() {
           />
         )}
 
+        {!knowledgeBases.isLoading && (
+          <SystemHealthStrip knowledgeBases={kbs} organizationId={currentOrganization.id} />
+        )}
+
         <div className="grid gap-4 sm:grid-cols-3">
           {knowledgeBases.isLoading || conversations.isLoading || usage.isLoading ? (
             <>
-              <Skeleton className="h-[74px] rounded-xl" />
-              <Skeleton className="h-[74px] rounded-xl" />
-              <Skeleton className="h-[74px] rounded-xl" />
+              <Skeleton className="h-[92px] rounded-xl sm:col-span-2" />
+              <div className="flex flex-col gap-4">
+                <Skeleton className="h-[42px] rounded-xl" />
+                <Skeleton className="h-[42px] rounded-xl" />
+              </div>
             </>
           ) : (
             <>
-              <StatCard label="Knowledge bases" icon={DatabaseIcon} value={String(kbs.length)} />
-              <StatCard
-                label="Conversations"
-                icon={MessagesSquareIcon}
-                value={String(conversations.data?.data.length ?? 0)}
-              />
-              <StatCard
-                label="Requests (30d)"
-                icon={ZapIcon}
-                value={String(usage.data?.totals.requestCount ?? 0)}
-              />
+              <div className="sm:col-span-2">
+                <UsageSummaryCard
+                  requestCount={usage.data?.totals.requestCount ?? 0}
+                  breakdown={usage.data?.breakdown ?? []}
+                />
+              </div>
+              <div className="flex flex-col gap-4">
+                <StatCard label="Knowledge bases" icon={DatabaseIcon} value={String(kbs.length)} />
+                <StatCard
+                  label="Conversations"
+                  icon={MessagesSquareIcon}
+                  value={String(conversations.data?.data.length ?? 0)}
+                />
+              </div>
             </>
           )}
         </div>

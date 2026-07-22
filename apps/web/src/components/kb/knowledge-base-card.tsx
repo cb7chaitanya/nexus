@@ -1,10 +1,17 @@
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
-import { DatabaseIcon, FileTextIcon, Loader2Icon, MessageCircleIcon } from "lucide-react";
+import {
+  DatabaseIcon,
+  FileTextIcon,
+  Loader2Icon,
+  MessageCircleIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useKnowledgeBase } from "@/hooks/use-knowledge-bases";
+import { useDocuments } from "@/hooks/use-documents";
 import { useSession } from "@/lib/session-context";
 import type { KnowledgeBase } from "@/lib/types";
 
@@ -12,6 +19,13 @@ export function KnowledgeBaseCard({ kb }: { kb: KnowledgeBase }) {
   const { currentOrganization } = useSession();
   const detail = useKnowledgeBase(kb.id, currentOrganization.id);
   const stats = detail.data?.stats;
+
+  const documents = useDocuments(kb.id, currentOrganization.id);
+  const docs = documents.data?.data ?? [];
+  const failedCount = docs.filter((doc) => doc.status === "FAILED").length;
+  const processingCount = docs.filter(
+    (doc) => doc.status === "QUEUED" || doc.status === "PROCESSING",
+  ).length;
 
   return (
     <Card interactive className="group py-5">
@@ -46,6 +60,17 @@ export function KnowledgeBaseCard({ kb }: { kb: KnowledgeBase }) {
             <span className="flex items-center gap-1">
               <Loader2Icon className="size-3.5 animate-spin" /> Loading…
             </span>
+          )}
+          {failedCount > 0 ? (
+            <span className="flex items-center gap-1 text-destructive">
+              <TriangleAlertIcon className="size-3.5" /> {failedCount} failed
+            </span>
+          ) : (
+            processingCount > 0 && (
+              <span className="flex items-center gap-1 text-warning">
+                <Loader2Icon className="size-3.5 animate-spin" /> {processingCount} processing
+              </span>
+            )
           )}
         </div>
         <div className="flex gap-2">
