@@ -1,3 +1,4 @@
+import { motion } from "framer-motion";
 import { CheckCircle2Icon, ClockIcon, Loader2Icon, TriangleAlertIcon, UploadIcon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -19,9 +20,17 @@ export function DocumentStatusBadge({ status }: { status: DocumentStatus }) {
   const config = STATUS_CONFIG[status];
   const Icon = config.icon;
   return (
-    <Badge variant={config.variant}>
-      <Icon className={config.spin ? "animate-spin" : undefined} />
-      {config.label}
-    </Badge>
+    <motion.span
+      key={status}
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.25, ease: "easeOut" }}
+      className="inline-block"
+    >
+      <Badge variant={config.variant}>
+        <Icon className={config.spin ? "animate-spin" : undefined} />
+        {config.label}
+      </Badge>
+    </motion.span>
   );
 }

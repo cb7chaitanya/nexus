@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import {
+  CheckCircle2Icon,
   DatabaseIcon,
   FileTextIcon,
   Loader2Icon,
@@ -61,17 +62,20 @@ export function KnowledgeBaseCard({ kb }: { kb: KnowledgeBase }) {
               <Loader2Icon className="size-3.5 animate-spin" /> Loading…
             </span>
           )}
-          {failedCount > 0 ? (
-            <span className="flex items-center gap-1 text-destructive">
-              <TriangleAlertIcon className="size-3.5" /> {failedCount} failed
-            </span>
-          ) : (
-            processingCount > 0 && (
+          {docs.length > 0 &&
+            (failedCount > 0 ? (
+              <span className="flex items-center gap-1 text-destructive">
+                <TriangleAlertIcon className="size-3.5" /> {failedCount} failed
+              </span>
+            ) : processingCount > 0 ? (
               <span className="flex items-center gap-1 text-warning">
                 <Loader2Icon className="size-3.5 animate-spin" /> {processingCount} processing
               </span>
-            )
-          )}
+            ) : (
+              <span className="flex items-center gap-1 text-success">
+                <CheckCircle2Icon className="size-3.5" /> Ready
+              </span>
+            ))}
         </div>
         <div className="flex gap-2">
           <Button size="sm" variant="outline" asChild className="flex-1">
