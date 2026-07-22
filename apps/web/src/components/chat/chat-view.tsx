@@ -119,7 +119,7 @@ export function ChatView({
         ) : (
           <div className="relative flex-1 overflow-hidden">
             <div ref={scrollRef} onScroll={handleScroll} className="h-full overflow-y-auto scrollbar-thin">
-              <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-6">
+              <div className="mx-auto flex max-w-3xl flex-col gap-8 px-4 py-6">
                 {messages.map((message) => (
                   <MessageBubble
                     key={message.id}

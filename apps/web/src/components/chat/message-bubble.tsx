@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import { CheckIcon, CopyIcon, RotateCwIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -10,7 +10,7 @@ import { TypingIndicator } from "@/components/chat/typing-indicator";
 import { Button } from "@/components/ui/button";
 import type { DisplayMessage } from "@/hooks/use-chat";
 
-export function MessageBubble({
+function MessageBubbleImpl({
   message,
   fileNames,
   knowledgeBaseId,
@@ -35,9 +35,7 @@ export function MessageBubble({
   if (isUser) {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[80%] rounded-2xl rounded-tr-sm bg-primary px-4 py-2.5 text-sm text-primary-foreground">
-          {message.content}
-        </div>
+        <div className="max-w-[65ch] rounded-lg bg-muted/60 px-3.5 py-2 text-sm">{message.content}</div>
       </div>
     );
   }
@@ -47,13 +45,18 @@ export function MessageBubble({
 
   return (
     <div className="group flex justify-start">
-      <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-secondary px-4 py-3 text-secondary-foreground">
+      <div className="max-w-[68ch] text-foreground">
         {showTyping ? (
           <TypingIndicator />
         ) : (
           <>
             <div className="relative">
-              <MarkdownContent content={message.content} />
+              <MarkdownContent
+                content={message.content}
+                citations={message.citations}
+                fileNames={fileNames}
+                knowledgeBaseId={knowledgeBaseId}
+              />
               {isStreamingText && (
                 <span className="animate-caret-blink ml-0.5 inline-block h-3.5 w-[2px] translate-y-0.5 bg-current align-middle" />
               )}
@@ -66,12 +69,18 @@ export function MessageBubble({
           </>
         )}
         {!message.pending && message.content.length > 0 && (
-          <div className="mt-2 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-            <Button variant="ghost" size="icon-sm" className="size-6" onClick={handleCopy}>
+          <div className="mt-1.5 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+            <Button variant="ghost" size="icon-sm" className="size-6 text-muted-foreground" onClick={handleCopy}>
               {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
             </Button>
             {isLast && onRegenerate && (
-              <Button variant="ghost" size="icon-sm" className="size-6" onClick={onRegenerate} title="Regenerate">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="size-6 text-muted-foreground"
+                onClick={onRegenerate}
+                title="Regenerate"
+              >
                 <RotateCwIcon className="size-3.5" />
               </Button>
             )}
@@ -81,6 +90,8 @@ export function MessageBubble({
     </div>
   );
 }
+
+export const MessageBubble = memo(MessageBubbleImpl);
 
 export function StreamErrorNotice({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (

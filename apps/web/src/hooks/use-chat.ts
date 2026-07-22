@@ -10,6 +10,11 @@ import { conversationKeys } from "@/hooks/use-conversations";
 import { isApiError } from "@/lib/api-error";
 import type { Citation, Message } from "@/lib/types";
 
+// Target render cadence for streamed tokens — smooth enough to still read
+// as "typing," while cutting the render/re-parse count far below one per
+// raw SSE token at typical provider throughput.
+const FLUSH_INTERVAL_MS = 60;
+
 export interface DisplayMessage {
   id: string;
   role: "USER" | "ASSISTANT";
@@ -51,6 +56,14 @@ export function useChat({
   const [streamError, setStreamError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const lastUserMessageRef = useRef<string | null>(null);
+  // Buffers raw SSE token deltas and flushes them into React state at most
+  // every FLUSH_INTERVAL_MS via requestAnimationFrame, instead of calling
+  // setMessages (and triggering a full markdown re-parse) on every single
+  // token — a chat provider can emit far more token events per second than
+  // the UI needs to visibly update at.
+  const bufferRef = useRef("");
+  const flushHandleRef = useRef<number | null>(null);
+  const lastFlushRef = useRef(0);
 
   const sendMessage = useCallback(
     async (text: string) => {
@@ -79,15 +92,46 @@ export function useChat({
       const controller = new AbortController();
       abortRef.current = controller;
 
+      bufferRef.current = "";
+      lastFlushRef.current = 0;
+
+      function flushBuffer() {
+        if (flushHandleRef.current != null) {
+          cancelAnimationFrame(flushHandleRef.current);
+          flushHandleRef.current = null;
+        }
+        const pending = bufferRef.current;
+        bufferRef.current = "";
+        if (pending) {
+          setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + pending } : m)));
+        }
+      }
+
+      function scheduleFlush() {
+        if (flushHandleRef.current != null) return;
+        flushHandleRef.current = requestAnimationFrame(function tick(now) {
+          if (now - lastFlushRef.current < FLUSH_INTERVAL_MS) {
+            flushHandleRef.current = requestAnimationFrame(tick);
+            return;
+          }
+          lastFlushRef.current = now;
+          flushHandleRef.current = null;
+          const pending = bufferRef.current;
+          bufferRef.current = "";
+          if (pending) {
+            setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + pending } : m)));
+          }
+        });
+      }
+
       try {
         await streamChat(
           knowledgeBaseId,
           { organizationId, message: trimmed, conversationId: localConversationId },
           {
             onToken: (delta) => {
-              setMessages((prev) =>
-                prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + delta } : m)),
-              );
+              bufferRef.current += delta;
+              scheduleFlush();
             },
             onCitations: (citations) => {
               setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, citations } : m)));
@@ -99,6 +143,9 @@ export function useChat({
           controller.signal,
         );
 
+        // Any buffered delta not yet flushed must land before marking the
+        // message no-longer-pending, or trailing text is silently dropped.
+        flushBuffer();
         setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, pending: false } : m)));
 
         if (!localConversationId) {
@@ -111,6 +158,11 @@ export function useChat({
         }
         queryClient.invalidateQueries({ queryKey: conversationKeys(organizationId).list(knowledgeBaseId) });
       } catch (error) {
+        // Always flush, even on abort — the rAF buffer can hold up to one
+        // flush interval's worth of already-received text that would
+        // otherwise vanish, a loss the pre-batching implementation never
+        // had (every token used to commit to state immediately).
+        flushBuffer();
         if (!controller.signal.aborted) {
           setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, pending: false } : m)));
           setStreamError(

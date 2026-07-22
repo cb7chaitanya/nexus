@@ -5,6 +5,7 @@ import {
   getConversation,
   listConversations,
   listMessages,
+  renameConversation,
 } from "@/lib/api/conversations";
 
 export function conversationKeys(organizationId: string) {
@@ -44,6 +45,16 @@ export function useDeleteConversation(organizationId: string, knowledgeBaseId?: 
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => deleteConversation(id, organizationId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: conversationKeys(organizationId).list(knowledgeBaseId) });
+    },
+  });
+}
+
+export function useRenameConversation(organizationId: string, knowledgeBaseId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, title }: { id: string; title: string }) => renameConversation(id, organizationId, title),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: conversationKeys(organizationId).list(knowledgeBaseId) });
     },

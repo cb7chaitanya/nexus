@@ -116,6 +116,7 @@ export interface PresignResponse {
 }
 
 export interface Citation {
+  refId: string;
   chunkId: string;
   documentId: string;
   pageNumber: number | null;

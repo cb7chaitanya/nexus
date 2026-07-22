@@ -4,7 +4,7 @@ import Link from "next/link";
 import { PlusIcon } from "lucide-react";
 import { toast } from "sonner";
 
-import { useConversations, useDeleteConversation } from "@/hooks/use-conversations";
+import { useConversations, useDeleteConversation, useRenameConversation } from "@/hooks/use-conversations";
 import { ConversationListItem } from "@/components/chat/conversation-list-item";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -48,6 +48,7 @@ export function ChatHistoryContent({
 }) {
   const conversations = useConversations(organizationId, knowledgeBaseId);
   const deleteConversation = useDeleteConversation(organizationId, knowledgeBaseId);
+  const renameConversation = useRenameConversation(organizationId, knowledgeBaseId);
   const items = conversations.data?.data ?? [];
   const groups = groupByDate(items);
 
@@ -86,6 +87,13 @@ export function ChatHistoryContent({
                             loading: "Deleting…",
                             success: "Conversation deleted",
                             error: "Couldn't delete conversation",
+                          })
+                        }
+                        onRename={(title) =>
+                          toast.promise(renameConversation.mutateAsync({ id: conversation.id, title }), {
+                            loading: "Renaming…",
+                            success: "Conversation renamed",
+                            error: "Couldn't rename conversation",
                           })
                         }
                       />

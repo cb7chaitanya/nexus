@@ -27,3 +27,10 @@ export function deleteConversation(id: string, organizationId: string) {
     query: { organizationId },
   });
 }
+
+export function renameConversation(id: string, organizationId: string, title: string) {
+  return apiFetch<Conversation>(`/conversations/${id}`, {
+    method: "PATCH",
+    body: { organizationId, title },
+  });
+}
