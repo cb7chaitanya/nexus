@@ -25,13 +25,17 @@
     "@raas/usage": "workspace:*",
     "@sentry/node": "^10.67.0",
     "bullmq": "^5.80.5",
+    "html-to-text": "^10.0.0",
     "ioredis": "^5.4.1",
+    "mammoth": "^1.12.0",
     "pdf-parse": "^2.4.5"
   },
   "devDependencies": {
     "@raas/config": "workspace:*",
+    "@types/html-to-text": "^9.0.4",
     "@types/node": "^20.14.0",
     "dotenv-cli": "^7.4.2",
+    "jszip": "^3.10.1",
     "tsx": "^4.19.0",
     "typescript": "^5.5.4",
     "vitest": "^2.1.9"

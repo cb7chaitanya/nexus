@@ -1,13 +1,11 @@
 import { PDFParse } from "pdf-parse";
 
-export interface ExtractedPage {
-  pageNumber: number;
-  text: string;
-}
+import type { ExtractedDocument } from "./extracted-document.js";
 
-export interface ExtractedDocument {
-  pages: ExtractedPage[];
-}
+// Re-exported so every existing `from "./extract-pdf.js"` import elsewhere
+// keeps working — the types themselves now live in extracted-document.ts,
+// the neutral home shared by every extractor, not just this PDF-specific one.
+export type { ExtractedPage, ExtractedDocument } from "./extracted-document.js";
 
 /**
  * Thrown when a PDF has no meaningfully-extractable text — most commonly a

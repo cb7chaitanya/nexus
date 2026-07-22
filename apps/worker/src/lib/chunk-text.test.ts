@@ -56,6 +56,15 @@ describe("chunkPages", () => {
     }
   });
 
+  it("carries a null page number straight through for non-paginated formats (txt/md/docx/html)", () => {
+    const pages: ExtractedPage[] = [{ pageNumber: null, text: "alpha beta gamma delta epsilon" }];
+
+    const chunks = chunkPages(pages);
+
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]!.pageNumber).toBeNull();
+  });
+
   it("charStart/charEnd correctly index into the chunk's own content length", () => {
     const pages: ExtractedPage[] = [{ pageNumber: 1, text: "alpha beta gamma delta" }];
 

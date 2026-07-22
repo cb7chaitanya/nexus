@@ -3,7 +3,9 @@ import { SUPPORTED_DOCUMENT_MIME_TYPES } from "@raas/shared";
 import { UnrecoverableError, type Job } from "bullmq";
 
 import { env } from "../env.js";
-import { extractPdfText, ScannedDocumentError, type ExtractedDocument } from "../lib/extract-pdf.js";
+import { extractDocument } from "../lib/extract-document.js";
+import { ScannedDocumentError } from "../lib/extract-pdf.js";
+import type { ExtractedDocument } from "../lib/extracted-document.js";
 import { DocumentValidationError, failDocument, isLastAttempt } from "../lib/job-failure.js";
 import { createJobLogger } from "../lib/job-logger.js";
 import { downloadObject } from "../lib/storage.js";
@@ -77,11 +79,13 @@ export async function extractTextProcessor(job: Job<DocumentJobData>): Promise<E
 
     const buffer = await downloadObject(document.storageKey);
     // Page/character counts only — never the extracted text itself.
-    const extracted = await extractPdfText(buffer);
+    const extracted = await extractDocument(document.mimeType, buffer);
     log.info({ pageCount: extracted.pages.length }, "text extracted");
     return extracted;
   } catch (err) {
     if (err instanceof ScannedDocumentError) {
+      // PDF-specific — extractDocument only ever routes to a path that can
+      // throw this for application/pdf, never for the other formats.
       await failDocument(organizationId, documentId, err);
       log.warn({ err }, "extract-text failed: scanned document");
       throw new UnrecoverableError(err.message);

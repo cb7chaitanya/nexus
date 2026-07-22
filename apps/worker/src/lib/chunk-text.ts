@@ -1,10 +1,10 @@
-import type { ExtractedPage } from "./extract-pdf.js";
+import type { ExtractedPage } from "./extracted-document.js";
 
 export interface TextChunk {
   chunkIndex: number;
   content: string;
   tokenCount: number;
-  pageNumber: number;
+  pageNumber: number | null;
   charStart: number;
   charEnd: number;
 }
@@ -28,7 +28,7 @@ function estimateTokens(text: string): number {
 
 interface Word {
   text: string;
-  pageNumber: number;
+  pageNumber: number | null;
 }
 
 /**
