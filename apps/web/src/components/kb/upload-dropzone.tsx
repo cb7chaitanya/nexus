@@ -45,11 +45,9 @@ export function UploadDropzone({
       // attempted for a file that can never succeed, instead of a
       // multi-second "uploading…" bar that only then errors out.
       if (!SUPPORTED_TYPES.has(file.type)) {
-        setItems((prev) => [
-          ...prev,
-          { id, name: file.name, status: "error", progress: 0, error: "Only PDF files are supported" },
-        ]);
-        toast.error(`${file.name}: Only PDF files are supported`);
+        const message = "Unsupported file type — PDF, DOCX, TXT, MD, or HTML only";
+        setItems((prev) => [...prev, { id, name: file.name, status: "error", progress: 0, error: message }]);
+        toast.error(`${file.name}: ${message}`);
         continue;
       }
 
@@ -111,7 +109,7 @@ export function UploadDropzone({
           className={cn("size-6 transition-transform duration-200", isDragging ? "scale-110 text-primary" : "text-muted-foreground")}
         />
         <p className="mt-3 text-sm font-medium">Drop files to upload, or click to browse</p>
-        <p className="mt-1 text-xs text-muted-foreground">PDF only · up to 1 GB per file</p>
+        <p className="mt-1 text-xs text-muted-foreground">PDF, DOCX, TXT, MD, HTML · up to 1 GB per file</p>
         <input
           ref={inputRef}
           type="file"
