@@ -21,3 +21,9 @@ export const listMessagesQuerySchema = z
   })
   .merge(cursorPaginationSchema);
 export type ListMessagesQuery = z.infer<typeof listMessagesQuerySchema>;
+
+export const renameConversationSchema = z.object({
+  organizationId: z.string().uuid(),
+  title: z.string().trim().min(1).max(200),
+});
+export type RenameConversationInput = z.infer<typeof renameConversationSchema>;

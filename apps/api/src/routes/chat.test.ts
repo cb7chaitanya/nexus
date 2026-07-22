@@ -155,7 +155,7 @@ describe("chat route", () => {
     expect(events.indexOf(citationEvents[0]!)).toBe(events.length - 1);
 
     const citations = (citationEvents[0]!.data as { citations: Array<Record<string, unknown>> }).citations;
-    expect(citations).toEqual([{ chunkId, documentId, pageNumber: 3, quote: expect.any(String) }]);
+    expect(citations).toEqual([{ refId: "c1", chunkId, documentId, pageNumber: 3, quote: expect.any(String) }]);
     expect((citations[0]!.quote as string).length).toBeGreaterThan(0);
   });
 

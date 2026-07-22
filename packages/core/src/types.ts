@@ -32,6 +32,7 @@ export interface AssembledContext {
  * request. See validateCitations's doc comment for exactly what this
  * does and does not verify. */
 export interface Citation {
+  refId: string;
   chunkId: string;
   documentId: string;
   pageNumber: number | null;

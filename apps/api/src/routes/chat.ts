@@ -136,11 +136,14 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
       Connection: "keep-alive",
     });
 
-    // Strips [[chunk:refId]] markers out of every delta before it's
-    // written to the client — the model is instructed to emit them, but
-    // they're an internal signal for citation parsing, never something a
-    // user should see (implementation-plan.md §2 item 5).
-    const filter = new CitationMarkerFilter();
+    // Rewrites [[chunk:refId]] markers into client-safe [[cite:refId]]
+    // tokens (dropping any refId that doesn't resolve against this
+    // request's own assembled chunks) before they're written to the
+    // client — the raw chunk: form is an internal signal for citation
+    // parsing, never something a user should see
+    // (implementation-plan.md §2 item 5), but a resolved refId is safe to
+    // expose since it's already been checked against real context.
+    const filter = new CitationMarkerFilter(new Set(assembled.chunks.map((chunk) => chunk.refId)));
     let cleanText = "";
     // Declared outside the try so the catch block below can still reach
     // stream.usage (whatever was captured before things broke) and so

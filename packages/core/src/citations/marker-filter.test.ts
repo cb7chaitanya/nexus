@@ -80,4 +80,33 @@ describe("CitationMarkerFilter", () => {
     expect(assembled).not.toContain("[[chunk:");
     expect(assembled).toBe("Intro  mid  end");
   });
+
+  it("rewrites a marker resolving to a valid refId into a client-safe cite token", () => {
+    const filter = new CitationMarkerFilter(new Set(["c1"]));
+    const out = filter.push("The sky is blue. [[chunk:c1]] Trust me.");
+    expect(out).toBe("The sky is blue. [[cite:c1]] Trust me.");
+    expect(out).not.toContain("[[chunk:");
+  });
+
+  it("still drops a marker whose refId is not in validRefIds", () => {
+    const filter = new CitationMarkerFilter(new Set(["c1"]));
+    const out = filter.push("A claim. [[chunk:c99]] Another.");
+    expect(out).toBe("A claim.  Another.");
+    expect(out).not.toContain("[[cite:");
+    expect(out).not.toContain("[[chunk:");
+  });
+
+  it("rewrites a valid marker split across multiple pushes", () => {
+    const filter = new CitationMarkerFilter(new Set(["c1"]));
+    let out = filter.push("see [[chu");
+    expect(out).toBe("see ");
+    out = filter.push("nk:c1]] now");
+    expect(out).toBe("[[cite:c1]] now");
+  });
+
+  it("rewrites multiple resolved markers, each looked up independently", () => {
+    const filter = new CitationMarkerFilter(new Set(["c1", "c2"]));
+    const out = filter.push("A [[chunk:c1]] and B [[chunk:c2]] and C [[chunk:c3]].");
+    expect(out).toBe("A [[cite:c1]] and B [[cite:c2]] and C .");
+  });
 });

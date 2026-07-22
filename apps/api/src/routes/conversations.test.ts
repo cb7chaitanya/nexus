@@ -276,4 +276,78 @@ describe("conversation routes", () => {
       expect(secondDelete.statusCode).toBe(404);
     });
   });
+
+  describe("PATCH /conversations/:id", () => {
+    it("requires authentication", async () => {
+      const response = await app.inject({
+        method: "PATCH",
+        url: `/conversations/${conversationIds[1]}`,
+        payload: { organizationId, title: "New title" },
+      });
+      expect(response.statusCode).toBe(401);
+    });
+
+    it("rejects an empty or overlong title", async () => {
+      const empty = await app.inject({
+        method: "PATCH",
+        url: `/conversations/${conversationIds[1]}`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+        payload: { organizationId, title: "" },
+      });
+      expect(empty.statusCode).toBe(422);
+
+      const overlong = await app.inject({
+        method: "PATCH",
+        url: `/conversations/${conversationIds[1]}`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+        payload: { organizationId, title: "x".repeat(201) },
+      });
+      expect(overlong.statusCode).toBe(422);
+    });
+
+    it("returns 404 for a conversation id that doesn't exist", async () => {
+      const response = await app.inject({
+        method: "PATCH",
+        url: `/conversations/${randomUUID()}`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+        payload: { organizationId, title: "New title" },
+      });
+      expect(response.statusCode).toBe(404);
+    });
+
+    it("never renames another organization's conversation, even scoped by the outsider's own real organizationId", async () => {
+      const response = await app.inject({
+        method: "PATCH",
+        url: `/conversations/${conversationIds[1]}`,
+        cookies: { [SESSION_COOKIE_NAME]: outsiderCookie },
+        payload: { organizationId: outsiderOrganizationId, title: "Hijacked title" },
+      });
+      expect(response.statusCode).toBe(404);
+
+      const stillOriginal = await app.inject({
+        method: "GET",
+        url: `/conversations/${conversationIds[1]}?organizationId=${organizationId}`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      });
+      expect(stillOriginal.json().title).toBe("Conversation 1");
+    });
+
+    it("renames the conversation and persists the new title", async () => {
+      const response = await app.inject({
+        method: "PATCH",
+        url: `/conversations/${conversationIds[1]}`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+        payload: { organizationId, title: "  Renamed conversation  " },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().title).toBe("Renamed conversation");
+
+      const fetched = await app.inject({
+        method: "GET",
+        url: `/conversations/${conversationIds[1]}?organizationId=${organizationId}`,
+        cookies: { [SESSION_COOKIE_NAME]: ownerCookie },
+      });
+      expect(fetched.json().title).toBe("Renamed conversation");
+    });
+  });
 });

@@ -11,7 +11,7 @@ const contextChunks: AssembledContextChunk[] = [
 describe("validateCitations", () => {
   it("resolves a marker that references a real context chunk", () => {
     const citations = validateCitations("The sky is blue. [[chunk:c1]]", contextChunks);
-    expect(citations).toEqual([{ chunkId: "chunk-a", documentId: "doc-1", pageNumber: 1, quote: contextChunks[0]!.content }]);
+    expect(citations).toEqual([{ refId: "c1", chunkId: "chunk-a", documentId: "doc-1", pageNumber: 1, quote: contextChunks[0]!.content }]);
   });
 
   it("drops a marker whose refId was never in the context sent for this request", () => {

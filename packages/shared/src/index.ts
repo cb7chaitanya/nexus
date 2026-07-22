@@ -70,8 +70,8 @@ export type {
 } from "./schemas/documents.js";
 export { chatSchema } from "./schemas/chat.js";
 export type { ChatInput } from "./schemas/chat.js";
-export { getConversationQuerySchema, listConversationsQuerySchema, listMessagesQuerySchema } from "./schemas/conversations.js";
-export type { GetConversationQuery, ListConversationsQuery, ListMessagesQuery } from "./schemas/conversations.js";
+export { getConversationQuerySchema, listConversationsQuerySchema, listMessagesQuerySchema, renameConversationSchema } from "./schemas/conversations.js";
+export type { GetConversationQuery, ListConversationsQuery, ListMessagesQuery, RenameConversationInput } from "./schemas/conversations.js";
 export { cursorPaginationSchema } from "./schemas/pagination.js";
 export type { CursorPaginationQuery } from "./schemas/pagination.js";
 export { getUsageQuerySchema } from "./schemas/usage.js";

@@ -42,6 +42,7 @@ export function validateCitations(rawText: string, contextChunks: AssembledConte
     }
 
     citations.push({
+      refId: chunk.refId,
       chunkId: chunk.chunkId,
       documentId: chunk.documentId,
       pageNumber: chunk.pageNumber,

@@ -1,5 +1,12 @@
 import { withTenantTransaction } from "@raas/db";
-import { ApiError, getConversationQuerySchema, listConversationsQuerySchema, listMessagesQuerySchema, parseOrThrow } from "@raas/shared";
+import {
+  ApiError,
+  getConversationQuerySchema,
+  listConversationsQuerySchema,
+  listMessagesQuerySchema,
+  parseOrThrow,
+  renameConversationSchema,
+} from "@raas/shared";
 import type { FastifyInstance } from "fastify";
 
 import { requireMembership } from "../lib/membership.js";
@@ -101,5 +108,27 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
     });
 
     reply.status(204).send();
+  });
+
+  app.patch("/conversations/:id", { preHandler: requireAuth }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const input = parseOrThrow(renameConversationSchema, request.body);
+    const userId = request.userId;
+    if (!userId) throw ApiError.unauthorized();
+
+    await requireMembership(request, input.organizationId, userId);
+
+    // Ownership: same RLS-scoped lookup as every other conversation route
+    // above — a conversation id belonging to another org is
+    // indistinguishable from a nonexistent one.
+    const conversation = await withTenantTransaction(input.organizationId, async (tx) => {
+      const existing = await tx.conversation.findUnique({ where: { id } });
+      if (!existing) {
+        throw ApiError.notFound("Conversation not found");
+      }
+      return tx.conversation.update({ where: { id }, data: { title: input.title } });
+    });
+
+    reply.send(conversation);
   });
 }
