@@ -18,6 +18,13 @@ export interface Organization {
   name: string;
   slug: string;
   plan: "free" | "pro" | "enterprise";
+  // Paddle linkage — all null for an org that's never subscribed.
+  // Billing-reconciliation-owned, see apps/api/src/routes/billing.ts;
+  // never set by any member-facing route.
+  paddleCustomerId: string | null;
+  paddleSubscriptionId: string | null;
+  subscriptionStatus: string | null;
+  subscriptionUpdatedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
