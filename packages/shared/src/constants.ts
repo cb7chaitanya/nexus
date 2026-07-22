@@ -24,13 +24,22 @@ export const MAX_UPLOAD_SIZE_BYTES = 1 * 1024 * 1024 * 1024;
 // far beyond what a real single document should ever legitimately need.
 export const MAX_CHUNKS_PER_DOCUMENT = 1000;
 
-// MVP: PDF is the entire supported data source (docs/decisions.md — "PDF
-// upload is the entire MVP data source"; docs/architecture.md §4.1 —
-// extraction is deliberately factored behind an interface so DOCX/HTML/
-// TXT/Markdown are additive later, not built yet). One source of truth so
-// the presign-time check (packages/shared) and the worker's own extraction
-// check (apps/worker) can't drift apart on the accepted type.
-export const SUPPORTED_DOCUMENT_MIME_TYPES = ["application/pdf"] as const;
+// Extraction is dispatched behind apps/worker/src/lib/extract-document.ts's
+// extractDocument(mimeType, buffer) — the interface docs/architecture.md
+// §4.1 originally described. This is the one source of truth for what's
+// accepted: it drives both the presign-time check (packages/shared) and the
+// worker's own defense-in-depth check (apps/worker), so the two can't drift
+// apart on the accepted set — but extractDocument's own switch still needs
+// its case list kept in sync with this list, since a dispatcher's cases
+// aren't derived from an array automatically.
+export const SUPPORTED_DOCUMENT_MIME_TYPES = [
+  "application/pdf",
+  "text/plain",
+  "text/markdown",
+  "text/x-markdown",
+  "text/html",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+] as const;
 
 // BullMQ queue/job names shared by apps/api (enqueues the flow after
 // POST /documents/:id/complete) and apps/worker (defines the processors
