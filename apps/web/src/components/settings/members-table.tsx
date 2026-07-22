@@ -1,7 +1,7 @@
 "use client";
 
 import { formatDistanceToNow } from "date-fns";
-import { MoreHorizontalIcon } from "lucide-react";
+import { MoreHorizontalIcon, UsersIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -21,6 +21,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useSession } from "@/lib/session-context";
 import { useChangeMemberRole, useMembers, useRemoveMember } from "@/hooks/use-organization-members";
 import type { OrgRole } from "@/lib/types";
@@ -36,6 +38,14 @@ export function MembersTable({ organizationId }: { organizationId: string }) {
   const canManage = currentOrganization.role === "OWNER" || currentOrganization.role === "ADMIN";
   const isOwner = currentOrganization.role === "OWNER";
   const rows = members.data?.data ?? [];
+
+  if (members.isLoading) {
+    return <Skeleton className="h-40 w-full" />;
+  }
+
+  if (rows.length === 0) {
+    return <EmptyState icon={UsersIcon} title="No members yet" description="Invite teammates to give them access to this organization." />;
+  }
 
   return (
     <Table>

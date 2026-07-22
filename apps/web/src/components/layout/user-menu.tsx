@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
-import { LogOutIcon, MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
+import { LogOutIcon, MonitorIcon, MoonIcon, SettingsIcon, SunIcon } from "lucide-react";
 
 import { useSession } from "@/lib/session-context";
 import { logout } from "@/lib/api/auth";
@@ -53,6 +53,10 @@ export function UserMenu() {
           <p className="truncate text-sm font-medium text-foreground">{user.name ?? "Account"}</p>
           <p className="truncate text-xs">{user.email}</p>
         </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => router.push("/settings/profile")}>
+          <SettingsIcon /> Settings
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         {themeOptions.map((option) => (
           <DropdownMenuItem
