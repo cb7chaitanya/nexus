@@ -7,13 +7,15 @@
 // the end state immediately — see page-transition.tsx for the reference
 // pattern.
 
-export const ease = {
+type CubicBezier = [number, number, number, number];
+
+export const ease: Record<"out" | "inOut" | "emphasized", CubicBezier> = {
   /** Default for enters/reveals — fast start, gentle settle. */
-  out: [0.16, 1, 0.3, 1] as const,
+  out: [0.16, 1, 0.3, 1],
   /** Symmetric — looping or state-cycling motion (e.g. pipeline stages). */
-  inOut: [0.65, 0, 0.35, 1] as const,
+  inOut: [0.65, 0, 0.35, 1],
   /** Larger/hero-scale motion — display text, big panel reveals. */
-  emphasized: [0.2, 0, 0, 1] as const,
+  emphasized: [0.2, 0, 0, 1],
 };
 
 export const duration = {
@@ -25,7 +27,7 @@ export const duration = {
   slow: 0.5,
 };
 
-export function transition(d: number = duration.base, e: readonly number[] = ease.out) {
+export function transition(d: number = duration.base, e: CubicBezier = ease.out) {
   return { duration: d, ease: e };
 }
 
