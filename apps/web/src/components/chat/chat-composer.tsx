@@ -51,7 +51,7 @@ export function ChatComposer({
 
   return (
     <div className="border-t border-border bg-background p-4">
-      <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-xl border border-input bg-card px-3 py-2 shadow-xs transition-shadow focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30">
+      <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-xl border border-input bg-card px-3 py-2 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30">
         <textarea
           ref={textareaRef}
           rows={1}
@@ -72,10 +72,10 @@ export function ChatComposer({
           </Button>
         )}
       </div>
-      <div className="mx-auto mt-2 flex max-w-3xl items-center justify-center gap-3 text-xs text-muted-foreground">
+      <div className="mx-auto mt-2 flex max-w-3xl items-center justify-center gap-3 text-small text-muted-foreground">
         <p className="text-center">
-          <kbd className="rounded border border-border px-1 py-0.5 font-mono text-[10px]">↵</kbd> to send ·{" "}
-          <kbd className="rounded border border-border px-1 py-0.5 font-mono text-[10px]">⇧↵</kbd> for a new line
+          <kbd className="rounded border border-border px-1 py-0.5 font-mono text-caption">↵</kbd> to send ·{" "}
+          <kbd className="rounded border border-border px-1 py-0.5 font-mono text-caption">⇧↵</kbd> for a new line
         </p>
         {length >= WARN_THRESHOLD && (
           <span className={cn(length >= MAX_LENGTH && "text-destructive")}>
@@ -83,7 +83,7 @@ export function ChatComposer({
           </span>
         )}
       </div>
-      <p className="mx-auto mt-1.5 max-w-3xl text-center text-xs text-muted-foreground">
+      <p className="mx-auto mt-1.5 max-w-3xl text-center text-small text-muted-foreground">
         Answers may be incomplete or inaccurate — always verify against the cited sources.
       </p>
     </div>
