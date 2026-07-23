@@ -1,7 +1,5 @@
 "use client";
 
-import { CoinsIcon, MessageSquareIcon, ZapIcon } from "lucide-react";
-
 import { useSession } from "@/lib/session-context";
 import { useUsage } from "@/hooks/use-usage";
 import { StatCard } from "@/components/dashboard/stat-card";
@@ -36,14 +34,13 @@ export default function UsagePage() {
         {new Date(period.from).toLocaleDateString()} – {new Date(period.to).toLocaleDateString()}
       </p>
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard label="Requests" icon={MessageSquareIcon} value={totals.requestCount.toLocaleString()} />
+      <div className="flex flex-col divide-y divide-border rounded-xl border border-border sm:flex-row sm:divide-x sm:divide-y-0">
+        <StatCard label="Requests" value={totals.requestCount.toLocaleString()} />
         <StatCard
           label="Tokens used"
-          icon={ZapIcon}
           value={(totals.embeddingTokens + totals.completionTokens).toLocaleString()}
         />
-        <StatCard label="Estimated cost" icon={CoinsIcon} value={`$${totals.estimatedCost.toFixed(2)}`} />
+        <StatCard label="Estimated cost" value={`$${totals.estimatedCost.toFixed(2)}`} />
       </div>
 
       <Card className="py-5">

@@ -5,8 +5,6 @@ import Link from "next/link";
 import {
   ArrowLeftIcon,
   FileTextIcon,
-  HardDriveIcon,
-  LayersIcon,
   MessageCircleIcon,
   MoreHorizontalIcon,
   PencilIcon,
@@ -121,10 +119,10 @@ export default function KnowledgeBaseDetailPage({
       />
 
       <div className="space-y-8 px-6 py-6">
-        <div className="grid gap-4 sm:grid-cols-3">
-          <StatCard label="Documents" icon={FileTextIcon} value={String(kb.data.stats.documentCount)} />
-          <StatCard label="Chunks indexed" icon={LayersIcon} value={String(kb.data.stats.chunkCount)} />
-          <StatCard label="Storage used" icon={HardDriveIcon} value={formatBytes(kb.data.stats.storageBytes)} />
+        <div className="flex flex-col divide-y divide-border rounded-xl border border-border sm:flex-row sm:divide-x sm:divide-y-0">
+          <StatCard label="Documents" value={String(kb.data.stats.documentCount)} />
+          <StatCard label="Chunks indexed" value={String(kb.data.stats.chunkCount)} />
+          <StatCard label="Storage used" value={formatBytes(kb.data.stats.storageBytes)} />
         </div>
 
         <section>
