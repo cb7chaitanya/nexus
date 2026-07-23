@@ -126,13 +126,13 @@ export default function KnowledgeBaseDetailPage({
         </div>
 
         <section>
-          <h2 className="mb-3 text-sm font-semibold">Upload documents</h2>
+          <h2 className="mb-3 text-h4">Upload documents</h2>
           <UploadDropzone knowledgeBaseId={id} organizationId={currentOrganization.id} />
         </section>
 
         <div className="grid gap-8 lg:grid-cols-3">
           <section className="lg:col-span-2">
-            <h2 className="mb-3 text-sm font-semibold">Documents</h2>
+            <h2 className="mb-3 text-h4">Documents</h2>
             {documents.isLoading ? (
               <Skeleton className="h-48 w-full rounded-xl" />
             ) : docs.length === 0 ? (
@@ -150,7 +150,7 @@ export default function KnowledgeBaseDetailPage({
 
           {!documents.isLoading && docs.length > 0 && (
             <section>
-              <h2 className="mb-3 text-sm font-semibold">Recent activity</h2>
+              <h2 className="mb-3 text-h4">Recent activity</h2>
               <Card className="py-4">
                 <CardContent>
                   <DocumentActivityTimeline documents={docs} />
