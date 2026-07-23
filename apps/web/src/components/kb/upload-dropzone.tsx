@@ -101,7 +101,7 @@ export function UploadDropzone({
         className={cn(
           "flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-10 text-center transition-all duration-200",
           isDragging
-            ? "scale-[1.01] border-primary bg-accent/40 shadow-sm"
+            ? "scale-[1.01] border-primary bg-accent/40"
             : "border-border hover:border-primary/40 hover:bg-accent/20",
         )}
       >

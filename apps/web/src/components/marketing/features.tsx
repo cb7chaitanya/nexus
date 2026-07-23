@@ -67,7 +67,7 @@ export function Features() {
         <div className="mt-12 grid gap-6 lg:grid-cols-2">
           {storyFeatures.map((feature) => (
             <Card key={feature.title} interactive className="gap-0 p-8">
-              <div className="flex size-11 items-center justify-center rounded-lg bg-accent text-accent-foreground">
+              <div className="flex size-11 items-center justify-center rounded-lg bg-secondary text-foreground">
                 <feature.icon className="size-5" />
               </div>
               <h3 className="mt-5 text-lg font-semibold">{feature.title}</h3>
@@ -79,7 +79,7 @@ export function Features() {
         <div className="mt-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
           {supportingFeatures.map((feature) => (
             <Card key={feature.title} interactive className="gap-0 p-6">
-              <div className="flex size-9 items-center justify-center rounded-lg bg-accent text-accent-foreground">
+              <div className="flex size-9 items-center justify-center rounded-lg bg-secondary text-foreground">
                 <feature.icon className="size-4.5" />
               </div>
               <h3 className="mt-4 text-sm font-semibold">{feature.title}</h3>

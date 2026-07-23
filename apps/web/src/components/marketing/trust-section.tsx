@@ -44,7 +44,7 @@ export function TrustSection() {
         <div className="mt-12 grid gap-6 sm:grid-cols-2">
           {guarantees.map((item) => (
             <Card key={item.title} interactive className="gap-0 p-6">
-              <div className="flex size-9 items-center justify-center rounded-lg bg-accent text-accent-foreground">
+              <div className="flex size-9 items-center justify-center rounded-lg bg-secondary text-foreground">
                 <item.icon className="size-4.5" />
               </div>
               <h3 className="mt-4 text-sm font-semibold">{item.title}</h3>

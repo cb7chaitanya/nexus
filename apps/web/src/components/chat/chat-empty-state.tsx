@@ -25,7 +25,7 @@ export function ChatEmptyState({
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35 }}
       >
-        <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-accent text-accent-foreground">
+        <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-secondary text-foreground">
           <MessageCircleIcon className="size-5" />
         </div>
         <SubTitle className="mt-4">Ask {knowledgeBaseName} anything</SubTitle>
@@ -46,7 +46,7 @@ export function ChatEmptyState({
                 show: { opacity: 1, y: 0 },
               }}
               onClick={() => onSuggestionClick(suggestion)}
-              className="flex items-center gap-2 rounded-lg border border-border bg-card px-3.5 py-2.5 text-left text-sm shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:bg-accent/40 hover:shadow-sm"
+              className="flex items-center gap-2 rounded-lg border border-border bg-card px-3.5 py-2.5 text-left text-sm transition-colors duration-200 hover:border-primary/40 hover:bg-accent/40"
             >
               <SparklesIcon className="size-3.5 shrink-0 text-muted-foreground" />
               {suggestion}

@@ -60,7 +60,7 @@ export function GettingStartedChecklist({
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -8 }}
-        className="relative overflow-hidden rounded-xl border border-border bg-card p-5 shadow-xs"
+        className="relative overflow-hidden rounded-xl border border-border bg-card p-5"
       >
         <button
           type="button"
@@ -85,7 +85,7 @@ export function GettingStartedChecklist({
                   "flex h-full flex-col gap-2 rounded-lg border p-3.5 transition-all duration-200",
                   step.done
                     ? "border-success/30 bg-success/5"
-                    : "border-border bg-background hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-sm",
+                    : "border-border bg-background hover:border-foreground/20",
                 )}
               >
                 <div className="flex items-center gap-2">

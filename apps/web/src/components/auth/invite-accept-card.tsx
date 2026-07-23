@@ -33,8 +33,8 @@ export function InviteAcceptCard({ token }: { token: string }) {
   }
 
   return (
-    <div className="w-full max-w-sm rounded-xl border border-border bg-card p-6 text-center shadow-xs">
-      <div className="mx-auto flex size-10 items-center justify-center rounded-full bg-accent text-accent-foreground">
+    <div className="w-full max-w-sm rounded-xl border border-border bg-card p-6 text-center">
+      <div className="mx-auto flex size-10 items-center justify-center rounded-full bg-secondary text-foreground">
         <MailCheckIcon className="size-5" />
       </div>
       <SubTitle className="mt-4">You&apos;ve been invited</SubTitle>

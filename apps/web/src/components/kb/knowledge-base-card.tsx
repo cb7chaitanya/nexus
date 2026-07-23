@@ -32,7 +32,7 @@ export function KnowledgeBaseCard({ kb }: { kb: KnowledgeBase }) {
     <Card interactive className="group py-5">
       <CardHeader className="flex-row items-start justify-between gap-2">
         <div className="flex items-start gap-3 min-w-0">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-foreground transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-secondary text-foreground transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
             <DatabaseIcon className="size-4" />
           </div>
           <div className="min-w-0">
