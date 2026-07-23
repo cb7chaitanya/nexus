@@ -165,6 +165,49 @@
 
   --animate-in: enter 0.15s ease-out;
   --animate-out: exit 0.15s ease-in;
+
+  /* Formal type scale. Each step is one utility class (text-h1, etc).
+     markdown-content.tsx's chat prose is a deliberate exception — it stays
+     on plain text-base/leading-[1.7], not this scale. */
+  --text-caption: 0.6875rem;
+  --text-caption--line-height: 1.4;
+  --text-caption--letter-spacing: 0.01em;
+  --text-caption--font-weight: 500;
+
+  --text-small: 0.75rem;
+  --text-small--line-height: 1.5;
+  --text-small--letter-spacing: 0em;
+  --text-small--font-weight: 400;
+
+  --text-body: 0.875rem;
+  --text-body--line-height: 1.6;
+  --text-body--letter-spacing: 0em;
+  --text-body--font-weight: 400;
+
+  --text-h4: 1rem;
+  --text-h4--line-height: 1.4;
+  --text-h4--letter-spacing: 0em;
+  --text-h4--font-weight: 600;
+
+  --text-h3: 1.25rem;
+  --text-h3--line-height: 1.3;
+  --text-h3--letter-spacing: -0.005em;
+  --text-h3--font-weight: 600;
+
+  --text-h2: 1.75rem;
+  --text-h2--line-height: 1.2;
+  --text-h2--letter-spacing: -0.01em;
+  --text-h2--font-weight: 600;
+
+  --text-h1: 2.25rem;
+  --text-h1--line-height: 1.15;
+  --text-h1--letter-spacing: -0.015em;
+  --text-h1--font-weight: 600;
+
+  --text-display: clamp(2.5rem, 1.9rem + 2.6vw, 4.25rem);
+  --text-display--line-height: 1.05;
+  --text-display--letter-spacing: -0.02em;
+  --text-display--font-weight: 600;
 }
 
 @layer base {
