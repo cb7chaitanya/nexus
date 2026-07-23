@@ -2,14 +2,16 @@
 
 import { motion } from "framer-motion";
 
+import { duration, ease, transition } from "@/lib/motion";
+
 export function PipelineConnector({ filled }: { filled: boolean }) {
   return (
-    <div className="relative mx-2 h-px min-w-8 flex-1 bg-border">
+    <div className="relative mx-2 h-px min-w-6 flex-1 bg-border">
       <motion.div
         className="absolute inset-y-0 left-0 bg-primary"
         initial={false}
         animate={{ width: filled ? "100%" : "0%" }}
-        transition={{ duration: 0.5, ease: "easeInOut" }}
+        transition={transition(duration.slow, ease.inOut)}
       >
         <span
           aria-hidden

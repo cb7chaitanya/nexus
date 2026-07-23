@@ -14,8 +14,9 @@ export function PipelineAnswerPreview({
   stage: number;
   reducedMotion: boolean;
 }) {
-  const generating = stage >= 3;
-  const cited = stage >= 4;
+  // Indices into PipelineDemo's 8-stage STAGES array: 5 = "LLM", 6 = "Citations".
+  const generating = stage >= 5;
+  const cited = stage >= 6;
   const [charCount, setCharCount] = useState(reducedMotion ? ANSWER_TEXT.length : 0);
 
   useEffect(() => {
@@ -42,8 +43,8 @@ export function PipelineAnswerPreview({
 
   return (
     <div className="mx-auto max-w-xl">
-      <p className="text-xs font-medium text-muted-foreground">Generated answer</p>
-      <div className="mt-2 min-h-14 rounded-lg border border-border bg-background px-4 py-3 text-sm">
+      <p className="text-small font-medium text-muted-foreground">Generated answer</p>
+      <div className="mt-2 min-h-14 rounded-lg border border-border bg-background px-4 py-3 text-body">
         {generating ? (
           <span>
             {ANSWER_TEXT.slice(0, charCount)}
@@ -62,7 +63,7 @@ export function PipelineAnswerPreview({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 6 }}
             transition={{ duration: 0.25 }}
-            className="mt-2.5 inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 text-xs text-muted-foreground"
+            className="mt-2.5 inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 text-small text-muted-foreground"
           >
             <FileTextIcon className="size-3" /> enterprise-terms.pdf · p.4
           </motion.div>

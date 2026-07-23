@@ -2,21 +2,33 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useInView, useReducedMotion } from "framer-motion";
-import { FilterIcon, LayersIcon, QuoteIcon, SparklesIcon, UploadCloudIcon } from "lucide-react";
+import {
+  CheckCircle2Icon,
+  CogIcon,
+  FilterIcon,
+  LayersIcon,
+  NetworkIcon,
+  QuoteIcon,
+  SparklesIcon,
+  UploadCloudIcon,
+} from "lucide-react";
 
 import { PipelineAnswerPreview } from "@/components/marketing/pipeline-answer-preview";
 import { PipelineConnector } from "@/components/marketing/pipeline-connector";
 import { PipelineStage } from "@/components/marketing/pipeline-stage";
 
 const STAGES = [
-  { icon: UploadCloudIcon, label: "Ingest" },
-  { icon: LayersIcon, label: "Process" },
-  { icon: FilterIcon, label: "Retrieve" },
-  { icon: SparklesIcon, label: "Generate" },
-  { icon: QuoteIcon, label: "Cite" },
+  { icon: UploadCloudIcon, label: "Upload" },
+  { icon: CogIcon, label: "Processing" },
+  { icon: LayersIcon, label: "Chunking" },
+  { icon: NetworkIcon, label: "Embeddings" },
+  { icon: FilterIcon, label: "Retrieval" },
+  { icon: SparklesIcon, label: "LLM" },
+  { icon: QuoteIcon, label: "Citations" },
+  { icon: CheckCircle2Icon, label: "Answer" },
 ] as const;
 
-const STAGE_INTERVAL_MS = 1900;
+const STAGE_INTERVAL_MS = 1600;
 
 export function PipelineDemo() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -37,7 +49,7 @@ export function PipelineDemo() {
   return (
     <div ref={containerRef} className="rounded-2xl border border-border bg-card/40 p-6 sm:p-10">
       <div className="overflow-x-auto">
-        <div className="flex min-w-[560px] items-center">
+        <div className="flex min-w-[880px] items-center">
           {STAGES.map((stage, index) => (
             <div key={stage.label} className="flex flex-1 items-center last:flex-none">
               {index > 0 && <PipelineConnector filled={displayStage >= index} />}
