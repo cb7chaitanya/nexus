@@ -35,7 +35,7 @@ function CommandDialog({
       </VisuallyHidden>
       <DialogContent
         showCloseButton={false}
-        className="top-[20%] max-w-xl translate-y-0 gap-0 overflow-hidden p-0 shadow-lg"
+        className="top-[20%] max-w-xl translate-y-0 gap-0 overflow-hidden p-0 shadow-overlay"
       >
         <Command className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group]]:px-2 [&_[cmdk-input-wrapper]_svg]:size-4 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-2.5">
           {children}
