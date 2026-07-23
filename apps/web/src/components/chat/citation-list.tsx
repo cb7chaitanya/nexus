@@ -99,7 +99,7 @@ export function InlineCitation({
       <PopoverTrigger
         onMouseEnter={openNow}
         onMouseLeave={closeSoon}
-        className="mx-0.5 inline-flex h-[1.1em] min-w-[1.1em] -translate-y-[0.35em] items-center justify-center rounded-[3px] border border-border/70 px-[3px] align-top text-[0.65em] leading-none font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
+        className="mx-0.5 inline-flex h-[1.1em] min-w-[1.1em] -translate-y-[0.35em] items-center justify-center rounded-xs border border-border/70 px-[3px] align-top text-[0.65em] leading-none font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
       >
         {index + 1}
       </PopoverTrigger>
@@ -137,7 +137,7 @@ function ReferenceRow({
           "flex w-full items-start gap-2 rounded-md px-1.5 py-1 text-left text-xs transition-colors hover:bg-accent/60",
         )}
       >
-        <span className="flex size-4 shrink-0 items-center justify-center rounded-[3px] border border-border/70 text-[10px] font-medium text-muted-foreground">
+        <span className="flex size-4 shrink-0 items-center justify-center rounded-xs border border-border/70 text-[10px] font-medium text-muted-foreground">
           {index + 1}
         </span>
         <span className="min-w-0 flex-1 truncate text-muted-foreground">
