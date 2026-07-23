@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { DatabaseIcon, PlusIcon, SearchIcon } from "lucide-react";
 
 import { useSession } from "@/lib/session-context";
+import { staggerContainer, fadeUp } from "@/lib/motion";
 import { useKnowledgeBases } from "@/hooks/use-knowledge-bases";
 import { PageHeader } from "@/components/layout/page-header";
 import { KnowledgeBaseCard } from "@/components/kb/knowledge-base-card";
@@ -21,6 +22,7 @@ export default function KnowledgeBasesPage() {
   const searchParams = useSearchParams();
   const [createOpen, setCreateOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const reducedMotion = useReducedMotion();
 
   useEffect(() => {
     if (searchParams.get("create") === "1") {
@@ -88,15 +90,21 @@ export default function KnowledgeBasesPage() {
           <p className="py-16 text-center text-sm text-muted-foreground">
             No knowledge bases match &ldquo;{search}&rdquo;.
           </p>
+        ) : reducedMotion ? (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {filtered.map((kb) => (
+              <KnowledgeBaseCard key={kb.id} kb={kb} />
+            ))}
+          </div>
         ) : (
           <motion.div
             className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
             initial="hidden"
             animate="show"
-            variants={{ show: { transition: { staggerChildren: 0.04 } } }}
+            variants={staggerContainer(0.04)}
           >
             {filtered.map((kb) => (
-              <motion.div key={kb.id} variants={{ hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }}>
+              <motion.div key={kb.id} variants={fadeUp}>
                 <KnowledgeBaseCard kb={kb} />
               </motion.div>
             ))}

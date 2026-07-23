@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { ArrowRightIcon, DatabaseIcon, MessagesSquareIcon, PlusIcon } from "lucide-react";
 
 import { useSession } from "@/lib/session-context";
+import { staggerContainer, fadeUp } from "@/lib/motion";
 import { useKnowledgeBase, useKnowledgeBases } from "@/hooks/use-knowledge-bases";
 import { useConversations } from "@/hooks/use-conversations";
 import { useUsage } from "@/hooks/use-usage";
@@ -22,18 +23,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
-const gridVariants = {
-  hidden: {},
-  show: { transition: { staggerChildren: 0.05 } },
-};
-const cardVariants = {
-  hidden: { opacity: 0, y: 10 },
-  show: { opacity: 1, y: 0 },
-};
-
 export default function DashboardPage() {
   const { user, currentOrganization } = useSession();
   const [createOpen, setCreateOpen] = useState(false);
+  const reducedMotion = useReducedMotion();
 
   const knowledgeBases = useKnowledgeBases(currentOrganization.id);
   const conversations = useConversations(currentOrganization.id);
@@ -77,10 +70,7 @@ export default function DashboardPage() {
           {knowledgeBases.isLoading || conversations.isLoading || usage.isLoading ? (
             <>
               <Skeleton className="h-[92px] rounded-xl sm:col-span-2" />
-              <div className="flex flex-col gap-4">
-                <Skeleton className="h-[42px] rounded-xl" />
-                <Skeleton className="h-[42px] rounded-xl" />
-              </div>
+              <Skeleton className="h-[176px] rounded-xl" />
             </>
           ) : (
             <>
@@ -90,13 +80,9 @@ export default function DashboardPage() {
                   breakdown={usage.data?.breakdown ?? []}
                 />
               </div>
-              <div className="flex flex-col gap-4">
-                <StatCard label="Knowledge bases" icon={DatabaseIcon} value={String(kbs.length)} />
-                <StatCard
-                  label="Conversations"
-                  icon={MessagesSquareIcon}
-                  value={String(conversations.data?.data.length ?? 0)}
-                />
+              <div className="flex flex-col divide-y divide-border rounded-xl border border-border">
+                <StatCard label="Knowledge bases" value={String(kbs.length)} />
+                <StatCard label="Conversations" value={String(conversations.data?.data.length ?? 0)} />
               </div>
             </>
           )}
@@ -129,15 +115,21 @@ export default function DashboardPage() {
                 </Button>
               }
             />
+          ) : reducedMotion ? (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {kbs.slice(0, 6).map((kb) => (
+                <KnowledgeBaseCard key={kb.id} kb={kb} />
+              ))}
+            </div>
           ) : (
             <motion.div
               className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
               initial="hidden"
               animate="show"
-              variants={gridVariants}
+              variants={staggerContainer()}
             >
               {kbs.slice(0, 6).map((kb) => (
-                <motion.div key={kb.id} variants={cardVariants}>
+                <motion.div key={kb.id} variants={fadeUp}>
                   <KnowledgeBaseCard kb={kb} />
                 </motion.div>
               ))}
