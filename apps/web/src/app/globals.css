@@ -5,6 +5,10 @@
 
 :root {
   --radius: 0.375rem;
+  /* Reserved for true overlays (dialog/popover/dropdown/select/sheet/
+     command/tooltip) only — static at-rest surfaces (cards, buttons,
+     inputs) use a border, never a shadow. */
+  --shadow-overlay: 0 12px 32px -8px oklch(0.18 0.012 275 / 0.14), 0 2px 6px -2px oklch(0.18 0.012 275 / 0.08);
 
   /* Light mode */
   /* Neutral ramp (hue 275, matches --foreground) — surface tokens below are
@@ -59,6 +63,8 @@
 }
 
 .dark {
+  --shadow-overlay: 0 16px 40px -8px oklch(0 0 0 / 0.55), 0 4px 12px -4px oklch(0 0 0 / 0.35);
+
   /* Neutral ramp (hue 272, matches dark --background) */
   --neutral-50: oklch(0.96 0.005 272);
   --neutral-100: oklch(0.93 0.005 272);
@@ -155,6 +161,8 @@
   --color-neutral-100: var(--neutral-100);
   --color-neutral-500: var(--neutral-500);
   --color-neutral-900: var(--neutral-900);
+
+  --shadow-overlay: var(--shadow-overlay);
 
   --radius-xs: calc(var(--radius) - 3px);
   --radius-sm: calc(var(--radius) - 2px);
