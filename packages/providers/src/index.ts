@@ -7,6 +7,8 @@ export type { FakeEmbeddingProviderOptions } from "./embeddings/fake.js";
 export type { CompletionStream, LLMMessage, LLMProvider, TokenUsage } from "./llm/types.js";
 export { OpenAIChatProvider, OpenAIChatError } from "./llm/openai.js";
 export type { OpenAIChatProviderOptions } from "./llm/openai.js";
+export { AnthropicChatProvider, AnthropicChatError } from "./llm/anthropic.js";
+export type { AnthropicChatProviderOptions } from "./llm/anthropic.js";
 export { FakeLLMProvider } from "./llm/fake.js";
 export type { FakeLLMProviderOptions } from "./llm/fake.js";
 
