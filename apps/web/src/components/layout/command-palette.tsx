@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import {
   BarChart3Icon,
+  BotIcon,
+  CreditCardIcon,
   DatabaseIcon,
   KeyRoundIcon,
   LayoutDashboardIcon,
@@ -59,6 +61,12 @@ export function CommandPalette({
           </CommandItem>
           <CommandItem value="api keys" onSelect={() => go("/settings/api-keys")}>
             <KeyRoundIcon /> API keys
+          </CommandItem>
+          <CommandItem value="billing plan subscription" onSelect={() => go("/settings/billing")}>
+            <CreditCardIcon /> Billing
+          </CommandItem>
+          <CommandItem value="ai provider model openai anthropic groq" onSelect={() => go("/settings/ai-provider")}>
+            <BotIcon /> AI provider
           </CommandItem>
         </CommandGroup>
 
