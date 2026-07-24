@@ -67,6 +67,13 @@ export interface PublicApiKey {
   createdAt: string;
 }
 
+export interface PublicLlmConfig {
+  provider: "openai" | "anthropic" | "groq";
+  model: string;
+  lastValidatedAt: string | null;
+  lastValidationError: string | null;
+}
+
 export type KnowledgeBaseStatus = "ACTIVE" | "DELETING";
 
 export interface KnowledgeBase {
