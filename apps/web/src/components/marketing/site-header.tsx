@@ -20,6 +20,9 @@ export function SiteHeader({ isAuthenticated }: { isAuthenticated: boolean }) {
           <Link href="/pricing" className="transition-colors hover:text-foreground">
             Pricing
           </Link>
+          <Link href="/docs" className="transition-colors hover:text-foreground">
+            Docs
+          </Link>
         </nav>
         <div className="flex items-center gap-2">
           {isAuthenticated ? (

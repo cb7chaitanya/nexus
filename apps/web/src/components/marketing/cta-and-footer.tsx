@@ -56,6 +56,11 @@ export function SiteFooter({ isAuthenticated }: { isAuthenticated: boolean }) {
                   Pricing
                 </Link>
               </li>
+              <li>
+                <Link href="/docs" className="transition-colors hover:text-foreground">
+                  Docs
+                </Link>
+              </li>
             </ul>
           </div>
           <div>

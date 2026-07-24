@@ -50,27 +50,24 @@ It is **not** a chatbot demo. It's built the way you'd build it if you were char
 Turborepo monorepo, three deployables built from the same codebase and scaled independently: the web app can restart without touching ingestion, and the worker pool scales on its own.
 
 ```
-                         ┌───────────────────────┐
-                         │   apps/web (Next.js)    │   dashboard, chat UI, pricing
-                         └───────────┬─────────────┘
-                                     │ HTTPS (session cookie)
-                                     ▼
-    External API callers   ┌───────────────────────┐        ┌───────────────────┐
-    (API key, Bearer) ────▶│   apps/api (Fastify)    │◀──────▶│      Redis          │
-                            └───────────┬─────────────┘        │ queues · rate limits │
-              ┌──────────────────────────┼──────────────────────┐  short-lived cache  │
-              ▼                          ▼                      ▼  └──────────┬──────────┘
-     ┌─────────────────┐      ┌───────────────────┐   ┌──────────────────┐   │
-     │  Postgres +       │      │  Object storage     │   │   BullMQ           │◀──┘
-     │  pgvector          │      │  (S3 / R2)           │   │   apps/worker       │
-     │  system of record  │      │  raw documents        │   │  ingestion pipeline  │
-     └─────────┬─────────┘      └───────────────────┘   └──────────┬──────────┘
-               │                                                     │
-               │                                          ┌──────────▼───────────┐
-               │◀─────────────────────────────────────────┤ packages/providers     │
-                                                            │ LLM + embeddings        │
-                                                            │ OpenAI · Groq · fake     │
-                                                            └────────────────────────┘
+ apps/web (Next.js)
+ dashboard · streaming chat UI · pricing
+           │
+           │  HTTPS, session cookie
+           ▼
+ apps/api (Fastify)                          External API callers
+ auth · org/KB/document CRUD · chat (SSE)  ◀── Authorization: Bearer <key>
+           │
+           ├──────────────┬──────────────┬──────────────────┐
+           ▼              ▼              ▼                  ▼
+ Postgres + pgvector   Object storage   Redis          apps/worker (BullMQ)
+ system of record      (S3 / R2)        queues ·       extract → chunk →
+                        raw documents    rate limits    embed → store
+                                                                │
+                                                                ▼
+                                                      packages/providers
+                                                      LLM + embeddings
+                                                      OpenAI · Groq · fake
 ```
 
 | Component | Responsibility |
