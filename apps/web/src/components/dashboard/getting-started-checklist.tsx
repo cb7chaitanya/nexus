@@ -66,7 +66,7 @@ export function GettingStartedChecklist({
         <button
           type="button"
           onClick={dismiss}
-          className="absolute right-4 top-4 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+          className="absolute right-4 top-4 rounded-md p-1 text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           aria-label="Dismiss"
         >
           <XIcon className="size-4" />
@@ -92,7 +92,7 @@ export function GettingStartedChecklist({
                 <div className="flex items-center gap-2">
                   <span
                     className={cn(
-                      "flex size-5 shrink-0 items-center justify-center rounded-full text-[11px] font-medium",
+                      "flex size-5 shrink-0 items-center justify-center rounded-full text-caption font-medium",
                       step.done ? "bg-success text-success-foreground" : "bg-muted text-muted-foreground",
                     )}
                   >

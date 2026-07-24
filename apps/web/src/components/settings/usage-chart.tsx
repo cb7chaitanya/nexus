@@ -23,7 +23,7 @@ export function UsageChart({ breakdown }: { breakdown: UsageBreakdownRow[] }) {
             className="w-full rounded-t-sm bg-primary/80 transition-colors group-hover:bg-primary"
             style={{ height: `${Math.max(4, (tokens / max) * 100)}%` }}
           />
-          <div className="pointer-events-none absolute bottom-full left-1/2 mb-1.5 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-foreground px-2 py-1 text-[11px] text-background group-hover:block">
+          <div className="pointer-events-none absolute bottom-full left-1/2 mb-1.5 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-foreground px-2 py-1 text-caption text-background group-hover:block">
             {format(new Date(date), "MMM d")} · {tokens.toLocaleString()} tokens
           </div>
         </div>

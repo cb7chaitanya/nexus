@@ -140,7 +140,7 @@ export function ChatView({
               <button
                 type="button"
                 onClick={scrollToBottom}
-                className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs shadow-overlay transition-colors hover:bg-accent"
+                className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs shadow-overlay outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               >
                 <ArrowDownIcon className="size-3.5" /> Scroll to bottom
               </button>

@@ -39,11 +39,11 @@ export function CodeBlock({ className, children, ...props }: React.ComponentProp
   return (
     <div className="mb-3 overflow-hidden rounded-lg border border-border last:mb-0">
       <div className="flex items-center justify-between bg-muted/60 px-3 py-1.5">
-        <span className="font-mono text-[11px] text-muted-foreground">{language}</span>
+        <span className="font-mono text-caption text-muted-foreground">{language}</span>
         <button
           type="button"
           onClick={handleCopy}
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-caption text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         >
           {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
           {copied ? "Copied" : "Copy"}

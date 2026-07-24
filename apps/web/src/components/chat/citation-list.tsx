@@ -166,7 +166,7 @@ export function CitationList({
 
   return (
     <div className="mt-3 border-t border-border/60 pt-2.5">
-      <p className="mb-1 text-[11px] font-medium text-muted-foreground">References</p>
+      <p className="mb-1 text-caption font-medium text-muted-foreground">References</p>
       <div>
         {deduped.map((citation, index) => (
           <ReferenceRow
