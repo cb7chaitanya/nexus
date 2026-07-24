@@ -8,13 +8,27 @@ import { Toaster } from "@/components/ui/sonner";
 
 import "./globals.css";
 
+const title = {
+  default: "Nexus — RAG as a Service",
+  template: "%s · Nexus",
+};
+const description =
+  "Ship grounded, cited AI answers over your team's documents in minutes — no ML infrastructure required.";
+
 export const metadata: Metadata = {
-  title: {
-    default: "Nexus — RAG as a Service",
-    template: "%s · Nexus",
+  metadataBase: new URL("https://nexus.chaitanya-bajpai.xyz"),
+  title,
+  description,
+  openGraph: {
+    title: title.default,
+    description,
+    type: "website",
   },
-  description:
-    "Ship grounded, cited AI answers over your team's documents in minutes — no ML infrastructure required.",
+  twitter: {
+    card: "summary_large_image",
+    title: title.default,
+    description,
+  },
 };
 
 const plexSans = IBM_Plex_Sans({
