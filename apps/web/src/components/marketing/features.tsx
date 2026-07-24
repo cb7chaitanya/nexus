@@ -1,3 +1,4 @@
+import Image from "next/image";
 import {
   DatabaseIcon,
   KeyRoundIcon,
@@ -15,12 +16,14 @@ const storyFeatures = [
     title: "Grounded, cited chat",
     description:
       "Every answer streams in real time and links back to the exact source passages it was built from — not a paraphrase, the actual quote and page.",
+    image: { src: "/marketing/chat-citations.jpg", alt: "A Nexus chat answer with an inline citation showing the exact quoted source passage" },
   },
   {
     icon: DatabaseIcon,
     title: "Isolated knowledge bases",
     description:
       "Organize documents into knowledge bases per product, team, or customer, each with its own independent retrieval scope — nothing bleeds across boundaries.",
+    image: { src: "/marketing/kb-detail.jpg", alt: "A Nexus knowledge base detail page showing document stats and an indexed document" },
   },
 ];
 
@@ -66,12 +69,21 @@ export function Features() {
 
         <div className="mt-12 grid gap-6 lg:grid-cols-2">
           {storyFeatures.map((feature) => (
-            <Card key={feature.title} interactive className="gap-0 p-8">
+            <Card key={feature.title} interactive className="gap-0 overflow-hidden p-8">
               <div className="flex size-11 items-center justify-center rounded-lg bg-secondary text-foreground">
                 <feature.icon className="size-5" />
               </div>
               <h3 className="mt-5 text-lg font-semibold">{feature.title}</h3>
               <p className="mt-2 text-sm text-muted-foreground">{feature.description}</p>
+              <div className="mt-6 -mx-8 -mb-8 overflow-hidden border-t border-border">
+                <Image
+                  src={feature.image.src}
+                  alt={feature.image.alt}
+                  width={1512}
+                  height={786}
+                  className="w-full"
+                />
+              </div>
             </Card>
           ))}
         </div>
