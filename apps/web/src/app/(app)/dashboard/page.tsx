@@ -2,14 +2,17 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useQueries } from "@tanstack/react-query";
 import { motion, useReducedMotion } from "framer-motion";
 import { ArrowRightIcon, DatabaseIcon, MessagesSquareIcon, PlusIcon } from "lucide-react";
 
 import { useSession } from "@/lib/session-context";
 import { staggerContainer, fadeUp } from "@/lib/motion";
-import { useKnowledgeBase, useKnowledgeBases } from "@/hooks/use-knowledge-bases";
+import { useKnowledgeBases } from "@/hooks/use-knowledge-bases";
 import { useConversations } from "@/hooks/use-conversations";
 import { useUsage } from "@/hooks/use-usage";
+import { documentKeys } from "@/hooks/use-documents";
+import { listDocuments } from "@/lib/api/documents";
 import { PageHeader } from "@/components/layout/page-header";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { SystemHealthStrip } from "@/components/dashboard/system-health-strip";
@@ -36,8 +39,18 @@ export default function DashboardPage() {
   const kbs = knowledgeBases.data?.data ?? [];
   const recentConversations = conversations.data?.data.slice(0, 5) ?? [];
 
-  const firstKb = useKnowledgeBase(kbs[0]?.id ?? "", currentOrganization.id);
-  const hasDocument = (firstKb.data?.stats.documentCount ?? 0) > 0;
+  // Bounded fan-out, same cap and queryKey as SystemHealthStrip — checking
+  // just kbs[0] would leave the checklist stuck "incomplete" forever for
+  // anyone who uploads to their 2nd+ knowledge base.
+  const trackedKbs = kbs.slice(0, 8);
+  const documentResults = useQueries({
+    queries: trackedKbs.map((kb) => ({
+      queryKey: documentKeys(kb.id),
+      queryFn: () => listDocuments(kb.id, currentOrganization.id),
+      enabled: Boolean(kb.id),
+    })),
+  });
+  const hasDocument = documentResults.some((result) => (result.data?.data.length ?? 0) > 0);
 
   return (
     <div className="pb-16">
@@ -59,6 +72,8 @@ export default function DashboardPage() {
             hasDocument={hasDocument}
             hasConversation={recentConversations.length > 0}
             createHref="/kb"
+            uploadHref={kbs[0] ? `/kb/${kbs[0].id}` : "/kb"}
+            chatHref={kbs[0] ? `/kb/${kbs[0].id}/chat` : "/kb"}
           />
         )}
 

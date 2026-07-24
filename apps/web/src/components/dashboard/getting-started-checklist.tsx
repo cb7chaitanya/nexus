@@ -26,12 +26,16 @@ export function GettingStartedChecklist({
   hasDocument,
   hasConversation,
   createHref,
+  uploadHref,
+  chatHref,
 }: {
   organizationId: string;
   hasKnowledgeBase: boolean;
   hasDocument: boolean;
   hasConversation: boolean;
   createHref: string;
+  uploadHref: string;
+  chatHref: string;
 }) {
   const [dismissed, setDismissed] = useState(true);
   const reducedMotion = useReducedMotion();
@@ -41,9 +45,9 @@ export function GettingStartedChecklist({
   }, [organizationId]);
 
   const steps: Step[] = [
-    { label: "Create a knowledge base", description: "Group related documents together.", done: hasKnowledgeBase },
-    { label: "Upload a document", description: "PDFs, text, and markdown are all supported.", done: hasDocument },
-    { label: "Start chatting", description: "Ask a question and get a cited answer.", done: hasConversation },
+    { label: "Create a knowledge base", description: "Group related documents together.", href: createHref, done: hasKnowledgeBase },
+    { label: "Upload a document", description: "PDFs, text, and markdown are all supported.", href: uploadHref, done: hasDocument },
+    { label: "Start chatting", description: "Ask a question and get a cited answer.", href: chatHref, done: hasConversation },
   ];
   const completedCount = steps.filter((s) => s.done).length;
   const allDone = completedCount === steps.length;
