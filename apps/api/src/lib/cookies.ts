@@ -26,6 +26,7 @@ export function setSessionCookie(reply: FastifyReply, token: string): void {
     domain: env.SESSION_COOKIE_DOMAIN,
     maxAge: env.SESSION_TTL_SECONDS,
   });
+  clearStaleHostOnlyCookie(reply);
 }
 
 export function clearSessionCookie(reply: FastifyReply): void {
@@ -33,6 +34,25 @@ export function clearSessionCookie(reply: FastifyReply): void {
   // treats this as clearing a different (host-only) cookie and leaves the
   // real, domain-scoped session cookie behind.
   reply.clearCookie(SESSION_COOKIE_NAME, { path: "/", domain: env.SESSION_COOKIE_DOMAIN });
+  clearStaleHostOnlyCookie(reply);
+}
+
+// Before SESSION_COOKIE_DOMAIN existed, this cookie was always host-only.
+// Anyone who logged in before that shipped and has since authenticated
+// again (without a full manual browser cookie clear) can be carrying BOTH
+// the old host-only cookie and the new domain-scoped one at once — sent
+// together on every request, with whichever one the server happens to
+// read determined by cookie ordering, not anything meaningful. That's
+// what makes auth state flip unpredictably between requests for exactly
+// these "old" sessions. Hooked into both set and clear so any affected
+// user gets cleaned up the moment they next log in, sign up, or log out —
+// no separate migration needed. Only relevant when SESSION_COOKIE_DOMAIN
+// is actually set — clearing a host-only cookie when it's unset would
+// delete the very cookie setSessionCookie just set above, since an unset
+// SESSION_COOKIE_DOMAIN means host-only IS the current, correct shape.
+function clearStaleHostOnlyCookie(reply: FastifyReply): void {
+  if (!env.SESSION_COOKIE_DOMAIN) return;
+  reply.clearCookie(SESSION_COOKIE_NAME, { path: "/" });
 }
 
 export const GOOGLE_OAUTH_STATE_COOKIE = "google_oauth_state";
