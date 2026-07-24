@@ -6,21 +6,10 @@ import Script from "next/script";
 import { PADDLE_CLIENT_TOKEN, PADDLE_PRO_PRICE_ID } from "@/lib/config";
 import { Button } from "@/components/ui/button";
 
-declare global {
-  interface Window {
-    Paddle?: {
-      Initialize: (options: { token: string }) => void;
-      Checkout: {
-        open: (options: {
-          items: { priceId: string; quantity: number }[];
-          customData: Record<string, string>;
-          customer: { email: string };
-        }) => void;
-      };
-    };
-  }
-}
-
+// window.Paddle's type now comes from @paddle/paddle-js's own global
+// augmentation (installed for the /pricing page) — no local declaration
+// needed here anymore, and declaring a second, narrower one would conflict
+// with it.
 let paddleInitialized = false;
 
 /**
