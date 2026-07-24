@@ -48,6 +48,14 @@ export function ChatView({
     for (const doc of documents.data?.data ?? []) map[doc.id] = doc.fileName;
     return map;
   }, [documents.data]);
+  const docs = documents.data?.data ?? [];
+  const documentStatus: "none" | "processing" | "ready" = documents.isLoading
+    ? "ready" // suppress the banner until we actually know — avoids a flash of "no documents" on load
+    : docs.some((doc) => doc.status === "READY")
+      ? "ready"
+      : docs.length > 0
+        ? "processing"
+        : "none";
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [stickToBottom, setStickToBottom] = useState(true);
@@ -115,7 +123,11 @@ export function ChatView({
         </div>
 
         {messages.length === 0 ? (
-          <ChatEmptyState knowledgeBaseName={knowledgeBase.name} onSuggestionClick={sendMessage} />
+          <ChatEmptyState
+            knowledgeBaseName={knowledgeBase.name}
+            documentStatus={documentStatus}
+            onSuggestionClick={sendMessage}
+          />
         ) : (
           <div className="relative flex-1 overflow-hidden">
             <div ref={scrollRef} onScroll={handleScroll} className="h-full overflow-y-auto scrollbar-thin">
