@@ -19,6 +19,7 @@ import { conversationRoutes } from "./routes/conversations.js";
 import { documentRoutes } from "./routes/documents.js";
 import { healthRoutes } from "./routes/health.js";
 import { knowledgeBaseRoutes } from "./routes/knowledge-bases.js";
+import { llmConfigRoutes } from "./routes/llm-config.js";
 import { organizationRoutes } from "./routes/organizations.js";
 import { usageRoutes } from "./routes/usage.js";
 import { v1Routes } from "./routes/v1.js";
@@ -160,6 +161,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(conversationRoutes);
   await app.register(usageRoutes);
   await app.register(billingRoutes);
+  await app.register(llmConfigRoutes);
   await app.register(v1Routes);
 
   return app;
