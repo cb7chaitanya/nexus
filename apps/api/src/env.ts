@@ -185,6 +185,12 @@ export const env = {
   PADDLE_PRO_PRICE_ID_YEARLY: process.env.PADDLE_PRO_PRICE_ID_YEARLY,
   PADDLE_ADVANCED_PRICE_ID_MONTHLY: process.env.PADDLE_ADVANCED_PRICE_ID_MONTHLY,
   PADDLE_ADVANCED_PRICE_ID_YEARLY: process.env.PADDLE_ADVANCED_PRICE_ID_YEARLY,
+  // Bring-your-own-LLM (routes/llm-config.ts, lib/llm-provider.ts) — same
+  // "optional, routes simply not registered when unset" shape as Paddle/
+  // Google OAuth above. Base64-encoded 32-byte AES-256-GCM key
+  // (@raas/crypto) that encrypts every customer-supplied provider API key
+  // before it's stored. Generate with `openssl rand -base64 32`.
+  LLM_KEY_ENCRYPTION_SECRET: process.env.LLM_KEY_ENCRYPTION_SECRET,
 };
 
 // Half-configured Google OAuth (one of the two set, not both) is almost

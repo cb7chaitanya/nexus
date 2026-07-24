@@ -78,3 +78,5 @@ export { getUsageQuerySchema } from "./schemas/usage.js";
 export type { GetUsageQuery } from "./schemas/usage.js";
 export { createPortalSessionSchema } from "./schemas/billing.js";
 export type { CreatePortalSessionInput } from "./schemas/billing.js";
+export { LLM_PROVIDERS, LLM_PROVIDER_MODELS, setLlmConfigSchema, testLlmConfigSchema } from "./schemas/llm-config.js";
+export type { LlmConfigProvider, SetLlmConfigInput, TestLlmConfigInput } from "./schemas/llm-config.js";

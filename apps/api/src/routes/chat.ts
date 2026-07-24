@@ -9,7 +9,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { env } from "../env.js";
 import { findOrCreateConversation, loadConversationHistory } from "../lib/conversation.js";
 import { getBudgetGuardedEmbeddingProvider } from "../lib/embedding-provider.js";
-import { getLLMModelName, getLLMProvider } from "../lib/llm-provider.js";
+import { resolveLlmProvider } from "../lib/llm-provider.js";
 import { requireMembership } from "../lib/membership.js";
 import { checkChatRateLimit, reserveChatTokenBudget, settleChatTokenUsage } from "../lib/rate-limit.js";
 import { getReranker } from "../lib/reranker.js";
@@ -169,8 +169,17 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
     // lean on there than a value that's always safe to use as-is.
     let stream: CompletionStream | undefined;
     let accounting: ChatTokenAccounting = { promptTokens: 0, completionTokens: 0, totalTokens: 0, source: "estimated" };
+    // Resolved fresh per request, no cross-request caching — see
+    // resolveLlmProvider's own doc comment. Failure here (e.g. a
+    // misconfigured or revoked BYO key) is deliberately NOT caught
+    // separately from a mid-generation failure: it lands in the same
+    // catch block below and produces the same "Generation failed" SSE
+    // error event, with no silent fallback to the platform provider.
+    let modelName = "";
     try {
-      stream = getLLMProvider().streamCompletion(messages);
+      const resolved = await resolveLlmProvider(input.organizationId);
+      modelName = resolved.modelName;
+      stream = resolved.provider.streamCompletion(messages);
       for await (const delta of stream) {
         const safe = filter.push(delta);
         if (safe) {
@@ -209,7 +218,7 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
         );
       }
       const { promptTokens, completionTokens, totalTokens, source: tokenSource } = accounting;
-      const model = getLLMModelName();
+      const model = modelName;
 
       // Step 6: persist user message, assistant message, citations, and
       // usage — all in one transaction, only after generation and

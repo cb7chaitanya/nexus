@@ -23,6 +23,7 @@
     "@paddle/paddle-node-sdk": "^3.8.0",
     "@raas/auth": "workspace:*",
     "@raas/core": "workspace:*",
+    "@raas/crypto": "workspace:*",
     "@raas/db": "workspace:*",
     "@raas/logger": "workspace:*",
     "@raas/metrics": "workspace:*",
