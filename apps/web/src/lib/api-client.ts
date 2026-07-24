@@ -11,6 +11,16 @@ export interface ApiRequestOptions {
   signal?: AbortSignal;
 }
 
+// A page like /dashboard fires several queries in parallel (KB list,
+// usage, conversations, SystemHealthStrip's own per-KB fan-out) — if the
+// session is invalid, they don't all 401 in the same tick, they trickle
+// in over several seconds as each one's own retry/backoff plays out.
+// Without this guard, every single one independently re-triggers
+// `window.location.href`, which restarts the pending navigation each
+// time and reads as the page being stuck in a reload loop rather than
+// one clean redirect to /login.
+let redirectingToLogin = false;
+
 function buildUrl(path: string, query?: ApiRequestOptions["query"]) {
   const url = new URL(path, API_URL);
   if (query) {
@@ -53,11 +63,12 @@ export async function apiFetch<T = undefined>(
   const payload = contentType.includes("application/json") ? await res.json() : undefined;
 
   if (!res.ok) {
-    if (res.status === 401 && typeof window !== "undefined") {
+    if (res.status === 401 && typeof window !== "undefined" && !redirectingToLogin) {
       const onAuthPage =
         window.location.pathname.startsWith("/login") ||
         window.location.pathname.startsWith("/signup");
       if (!onAuthPage) {
+        redirectingToLogin = true;
         window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`;
       }
     }
