@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { CheckIcon, FileIcon, UploadCloudIcon, XIcon } from "lucide-react";
 import { SUPPORTED_DOCUMENT_MIME_TYPES } from "@raas/shared";
 import { toast } from "sonner";
@@ -29,6 +29,7 @@ export function UploadDropzone({
   knowledgeBaseId: string;
   organizationId: string;
 }) {
+  const reducedMotion = useReducedMotion();
   const uploadDocument = useUploadDocument(knowledgeBaseId, organizationId);
   const [items, setItems] = useState<UploadItem[]>([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -129,11 +130,11 @@ export function UploadDropzone({
             {items.map((item) => (
               <motion.div
                 key={item.id}
-                layout
-                initial={{ opacity: 0, y: -6 }}
+                layout={!reducedMotion}
+                initial={reducedMotion ? false : { opacity: 0, y: -6 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, height: 0, marginTop: 0, marginBottom: 0 }}
-                transition={{ duration: 0.2, ease: "easeOut" }}
+                exit={reducedMotion ? undefined : { opacity: 0, height: 0, marginTop: 0, marginBottom: 0 }}
+                transition={reducedMotion ? { duration: 0 } : { duration: 0.2, ease: "easeOut" }}
                 className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-card px-3 py-2.5 text-sm"
               >
                 {item.status === "uploading" && <FileIcon className="size-4 shrink-0 text-muted-foreground" />}

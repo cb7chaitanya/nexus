@@ -1,4 +1,4 @@
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { CheckCircle2Icon, ClockIcon, Loader2Icon, TriangleAlertIcon, UploadIcon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -17,14 +17,15 @@ const STATUS_CONFIG: Record<
 };
 
 export function DocumentStatusBadge({ status }: { status: DocumentStatus }) {
+  const reducedMotion = useReducedMotion();
   const config = STATUS_CONFIG[status];
   const Icon = config.icon;
   return (
     <motion.span
       key={status}
-      initial={{ opacity: 0, scale: 0.9 }}
+      initial={reducedMotion ? false : { opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.25, ease: "easeOut" }}
+      transition={reducedMotion ? { duration: 0 } : { duration: 0.25, ease: "easeOut" }}
       className="inline-block"
     >
       <Badge variant={config.variant}>

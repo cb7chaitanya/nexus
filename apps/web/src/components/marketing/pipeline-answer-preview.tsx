@@ -59,10 +59,10 @@ export function PipelineAnswerPreview({
       <AnimatePresence>
         {cited && (
           <motion.div
-            initial={{ opacity: 0, y: 6 }}
+            initial={reducedMotion ? false : { opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 6 }}
-            transition={{ duration: 0.25 }}
+            exit={reducedMotion ? undefined : { opacity: 0, y: 6 }}
+            transition={reducedMotion ? { duration: 0 } : { duration: 0.25 }}
             className="mt-2.5 inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 text-small text-muted-foreground"
           >
             <FileTextIcon className="size-3" /> enterprise-terms.pdf · p.4

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { CheckIcon, XIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -34,6 +34,7 @@ export function GettingStartedChecklist({
   createHref: string;
 }) {
   const [dismissed, setDismissed] = useState(true);
+  const reducedMotion = useReducedMotion();
 
   useEffect(() => {
     setDismissed(localStorage.getItem(dismissedKey(organizationId)) === "true");
@@ -57,9 +58,9 @@ export function GettingStartedChecklist({
   return (
     <AnimatePresence>
       <motion.div
-        initial={{ opacity: 0, y: -8 }}
+        initial={reducedMotion ? false : { opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -8 }}
+        exit={reducedMotion ? undefined : { opacity: 0, y: -8 }}
         className="relative overflow-hidden rounded-xl border border-border bg-card p-5"
       >
         <button

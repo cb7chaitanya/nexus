@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 
 import { cn } from "@/lib/utils";
 import { primaryNavItems } from "@/components/layout/nav-config";
@@ -16,6 +16,7 @@ export function SidebarNav({
   scope?: "desktop" | "mobile";
 }) {
   const pathname = usePathname();
+  const reducedMotion = useReducedMotion();
 
   return (
     <nav className="flex flex-col gap-0.5 px-3">
@@ -35,8 +36,8 @@ export function SidebarNav({
           >
             {active && (
               <motion.span
-                layoutId={`sidebar-active-rail-${scope}`}
-                transition={{ type: "spring", stiffness: 500, damping: 40 }}
+                layoutId={reducedMotion ? undefined : `sidebar-active-rail-${scope}`}
+                transition={reducedMotion ? { duration: 0 } : { type: "spring", stiffness: 500, damping: 40 }}
                 className="absolute -left-3 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-primary"
               />
             )}

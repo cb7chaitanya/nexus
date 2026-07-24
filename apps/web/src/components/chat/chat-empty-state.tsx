@@ -1,6 +1,6 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { MessageCircleIcon, SparklesIcon } from "lucide-react";
 
 import { SubTitle } from "@/components/ui/typography";
@@ -18,12 +18,13 @@ export function ChatEmptyState({
   knowledgeBaseName: string;
   onSuggestionClick: (text: string) => void;
 }) {
+  const reducedMotion = useReducedMotion();
   return (
     <div className="flex h-full flex-col items-center justify-center px-6 text-center">
       <motion.div
-        initial={{ opacity: 0, y: 8 }}
+        initial={reducedMotion ? false : { opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35 }}
+        transition={reducedMotion ? { duration: 0 } : { duration: 0.35 }}
       >
         <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-secondary text-foreground">
           <MessageCircleIcon className="size-5" />
@@ -36,13 +37,13 @@ export function ChatEmptyState({
           className="mx-auto mt-6 flex max-w-md flex-col gap-2"
           initial="hidden"
           animate="show"
-          variants={{ show: { transition: { staggerChildren: 0.06, delayChildren: 0.15 } } }}
+          variants={{ show: { transition: { staggerChildren: reducedMotion ? 0 : 0.06, delayChildren: reducedMotion ? 0 : 0.15 } } }}
         >
           {suggestions.map((suggestion) => (
             <motion.button
               key={suggestion}
               variants={{
-                hidden: { opacity: 0, y: 6 },
+                hidden: reducedMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: 6 },
                 show: { opacity: 1, y: 0 },
               }}
               onClick={() => onSuggestionClick(suggestion)}
