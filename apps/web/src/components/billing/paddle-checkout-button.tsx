@@ -3,7 +3,7 @@
 import { useState, type ComponentProps } from "react";
 import Script from "next/script";
 
-import { PADDLE_CLIENT_TOKEN, PADDLE_PRO_PRICE_ID } from "@/lib/config";
+import { PADDLE_CLIENT_TOKEN, PADDLE_ENVIRONMENT, PADDLE_PRO_PRICE_ID } from "@/lib/config";
 import { Button } from "@/components/ui/button";
 
 // window.Paddle's type now comes from @paddle/paddle-js's own global
@@ -14,9 +14,9 @@ let paddleInitialized = false;
 
 /**
  * Renders nothing when billing isn't configured (PADDLE_CLIENT_TOKEN/
- * PADDLE_PRO_PRICE_ID unset) — same "simply not there" shape as every
- * other optional-feature gate in this app, rather than a disabled button
- * that goes nowhere.
+ * PADDLE_PRO_PRICE_ID/PADDLE_ENVIRONMENT unset) — same "simply not there"
+ * shape as every other optional-feature gate in this app, rather than a
+ * disabled button that goes nowhere.
  */
 export function PaddleCheckoutButton({
   organizationId,
@@ -25,13 +25,16 @@ export function PaddleCheckoutButton({
 }: { organizationId: string; email: string } & ComponentProps<typeof Button>) {
   const [scriptReady, setScriptReady] = useState(false);
 
-  if (!PADDLE_CLIENT_TOKEN || !PADDLE_PRO_PRICE_ID) {
+  if (!PADDLE_CLIENT_TOKEN || !PADDLE_PRO_PRICE_ID || !PADDLE_ENVIRONMENT) {
     return null;
   }
 
   function handleClick() {
     if (!window.Paddle) return;
     if (!paddleInitialized) {
+      // Must run before Initialize — Paddle.js reads this once, at setup,
+      // to decide which API it talks to.
+      window.Paddle.Environment.set(PADDLE_ENVIRONMENT as "sandbox" | "production");
       window.Paddle.Initialize({ token: PADDLE_CLIENT_TOKEN! });
       paddleInitialized = true;
     }

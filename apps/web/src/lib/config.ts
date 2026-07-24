@@ -12,3 +12,9 @@ export const ACTIVE_ORG_COOKIE_NAME = "raas_active_org";
 // NEXT_PUBLIC_ env) — both must be set to the same real Paddle Price id.
 export const PADDLE_CLIENT_TOKEN = process.env.NEXT_PUBLIC_PADDLE_CLIENT_TOKEN;
 export const PADDLE_PRO_PRICE_ID = process.env.NEXT_PUBLIC_PADDLE_PRO_PRICE_ID;
+// Without this, Paddle.js defaults to production regardless of what kind
+// of token it was given — a sandbox token initialized with no explicit
+// environment fails checkout with a generic "Something went wrong" (see
+// paddle-checkout-button.tsx's handleClick), not an error that names the
+// actual mismatch.
+export const PADDLE_ENVIRONMENT = process.env.NEXT_PUBLIC_PADDLE_ENVIRONMENT;
