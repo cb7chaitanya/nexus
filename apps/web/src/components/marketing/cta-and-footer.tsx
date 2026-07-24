@@ -37,24 +37,24 @@ export function SiteFooter({ isAuthenticated }: { isAuthenticated: boolean }) {
             <p className="font-medium text-foreground">Product</p>
             <ul className="mt-3 space-y-2 text-muted-foreground">
               <li>
-                <a href="#features" className="transition-colors hover:text-foreground">
+                <Link href="/#features" className="transition-colors hover:text-foreground">
                   Features
-                </a>
+                </Link>
               </li>
               <li>
-                <a href="#how-it-works" className="transition-colors hover:text-foreground">
+                <Link href="/#how-it-works" className="transition-colors hover:text-foreground">
                   How it works
-                </a>
+                </Link>
               </li>
               <li>
-                <a href="#architecture" className="transition-colors hover:text-foreground">
+                <Link href="/#architecture" className="transition-colors hover:text-foreground">
                   Architecture
-                </a>
+                </Link>
               </li>
               <li>
-                <a href="#pricing" className="transition-colors hover:text-foreground">
+                <Link href="/pricing" className="transition-colors hover:text-foreground">
                   Pricing
-                </a>
+                </Link>
               </li>
             </ul>
           </div>

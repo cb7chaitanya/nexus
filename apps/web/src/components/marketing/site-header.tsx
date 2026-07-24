@@ -11,15 +11,15 @@ export function SiteHeader({ isAuthenticated }: { isAuthenticated: boolean }) {
           <Logo />
         </Link>
         <nav className="hidden items-center gap-8 text-sm text-muted-foreground md:flex">
-          <a href="#features" className="transition-colors hover:text-foreground">
+          <Link href="/#features" className="transition-colors hover:text-foreground">
             Features
-          </a>
-          <a href="#how-it-works" className="transition-colors hover:text-foreground">
+          </Link>
+          <Link href="/#how-it-works" className="transition-colors hover:text-foreground">
             How it works
-          </a>
-          <a href="#pricing" className="transition-colors hover:text-foreground">
+          </Link>
+          <Link href="/pricing" className="transition-colors hover:text-foreground">
             Pricing
-          </a>
+          </Link>
         </nav>
         <div className="flex items-center gap-2">
           {isAuthenticated ? (
