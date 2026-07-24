@@ -22,13 +22,34 @@ interface SubscriptionEventData {
   customData: Record<string, unknown> | null;
 }
 
-/** Only one paid tier exists today (Pro) — a canceled subscription always
- * reverts to free; an active/trialing/past_due one with a Pro-priced item
- * is "pro"; anything else falls back to "free" rather than guessing. */
+// Built once at module scope. This module is statically imported
+// regardless of whether PADDLE_API_KEY is set (see paddle-client.ts's own
+// comment on the same eager-import behavior), so this has to tolerate all
+// 6 vars being undefined — the .filter below drops them, leaving an empty
+// (harmless) map. env.ts's all-or-nothing check guarantees they're never
+// partially set, so in practice this is either fully populated or empty.
+const PRICE_ID_TO_PLAN: ReadonlyMap<string, string> = new Map(
+  [
+    [env.PADDLE_STARTER_PRICE_ID_MONTHLY, "starter"],
+    [env.PADDLE_STARTER_PRICE_ID_YEARLY, "starter"],
+    [env.PADDLE_PRO_PRICE_ID, "pro"],
+    [env.PADDLE_PRO_PRICE_ID_YEARLY, "pro"],
+    [env.PADDLE_ADVANCED_PRICE_ID_MONTHLY, "advanced"],
+    [env.PADDLE_ADVANCED_PRICE_ID_YEARLY, "advanced"],
+  ].filter((entry): entry is [string, string] => typeof entry[0] === "string"),
+);
+
+/** A canceled subscription always reverts to free; an active/trialing/
+ * past_due one is resolved to whichever tier its price id maps to, via
+ * PRICE_ID_TO_PLAN above; anything unmatched falls back to "free" rather
+ * than guessing. */
 function resolvePlan(data: SubscriptionEventData): string {
   if (data.status === "canceled") return "free";
-  const hasProPrice = data.items.some((item) => item.price?.id === env.PADDLE_PRO_PRICE_ID);
-  return hasProPrice ? "pro" : "free";
+  for (const item of data.items) {
+    const plan = item.price?.id ? PRICE_ID_TO_PLAN.get(item.price.id) : undefined;
+    if (plan) return plan;
+  }
+  return "free";
 }
 
 export async function billingRoutes(app: FastifyInstance): Promise<void> {

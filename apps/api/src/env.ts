@@ -173,10 +173,18 @@ export const env = {
   // deployment at real Paddle production would be a much worse failure
   // mode than accidentally staying in sandbox.
   PADDLE_ENVIRONMENT: (process.env.PADDLE_ENVIRONMENT ?? "sandbox") as "sandbox" | "production",
-  // The Pro tier's Paddle Price ID (pri_...) — created in the Paddle
+  // Each tier's Paddle Price IDs (pri_...) — created in the Paddle
   // dashboard, not something this app generates. Maps a checkout/
-  // subscription back to our own "pro" plan value in routes/billing.ts.
+  // subscription back to a plan value in routes/billing.ts's resolvePlan.
+  // PADDLE_PRO_PRICE_ID predates the other five (kept as-is, still "Pro
+  // monthly") — the settings/billing page's existing upgrade button
+  // depends on this exact name.
+  PADDLE_STARTER_PRICE_ID_MONTHLY: process.env.PADDLE_STARTER_PRICE_ID_MONTHLY,
+  PADDLE_STARTER_PRICE_ID_YEARLY: process.env.PADDLE_STARTER_PRICE_ID_YEARLY,
   PADDLE_PRO_PRICE_ID: process.env.PADDLE_PRO_PRICE_ID,
+  PADDLE_PRO_PRICE_ID_YEARLY: process.env.PADDLE_PRO_PRICE_ID_YEARLY,
+  PADDLE_ADVANCED_PRICE_ID_MONTHLY: process.env.PADDLE_ADVANCED_PRICE_ID_MONTHLY,
+  PADDLE_ADVANCED_PRICE_ID_YEARLY: process.env.PADDLE_ADVANCED_PRICE_ID_YEARLY,
 };
 
 // Half-configured Google OAuth (one of the two set, not both) is almost
@@ -187,12 +195,21 @@ if (Boolean(env.GOOGLE_CLIENT_ID) !== Boolean(env.GOOGLE_CLIENT_SECRET)) {
   throw new Error("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must both be set, or both left unset. Refusing to start.");
 }
 
-// Same all-or-nothing discipline as Google OAuth above, extended to three
-// fields — any one of these set without the other two is almost certainly
-// a partially-completed setup, not an intentional configuration.
-const paddleFieldsSet = [env.PADDLE_API_KEY, env.PADDLE_WEBHOOK_SECRET, env.PADDLE_PRO_PRICE_ID].map(Boolean);
+// Same all-or-nothing discipline as Google OAuth above, extended to all
+// eight Paddle fields — any subset set without the rest is almost
+// certainly a partially-completed setup, not an intentional configuration.
+const paddleFieldsSet = [
+  env.PADDLE_API_KEY,
+  env.PADDLE_WEBHOOK_SECRET,
+  env.PADDLE_STARTER_PRICE_ID_MONTHLY,
+  env.PADDLE_STARTER_PRICE_ID_YEARLY,
+  env.PADDLE_PRO_PRICE_ID,
+  env.PADDLE_PRO_PRICE_ID_YEARLY,
+  env.PADDLE_ADVANCED_PRICE_ID_MONTHLY,
+  env.PADDLE_ADVANCED_PRICE_ID_YEARLY,
+].map(Boolean);
 if (new Set(paddleFieldsSet).size > 1) {
   throw new Error(
-    "PADDLE_API_KEY, PADDLE_WEBHOOK_SECRET, and PADDLE_PRO_PRICE_ID must all be set, or all left unset. Refusing to start.",
+    "PADDLE_API_KEY, PADDLE_WEBHOOK_SECRET, and all 6 tier price ids (PADDLE_{STARTER,PRO,ADVANCED}_PRICE_ID{,_YEARLY}) must all be set, or all left unset. Refusing to start.",
   );
 }

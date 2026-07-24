@@ -4,9 +4,9 @@
  * Webhooks.unmarshal) is a pure local HMAC-SHA256 computation with no
  * network call (verified directly by reading the SDK's compiled source),
  * so a real signature is computed here and genuinely verified, not
- * bypassed — this file needs PADDLE_API_KEY/PADDLE_WEBHOOK_SECRET/
- * PADDLE_PRO_PRICE_ID set (see .env's fake-but-consistent local values)
- * for billingRoutes to even register, but never calls Paddle's real API —
+ * bypassed — this file needs PADDLE_API_KEY/PADDLE_WEBHOOK_SECRET/all 6
+ * tier price ids set (see .env) for billingRoutes to even register, but
+ * never calls Paddle's real API —
  * customerPortalSessions.create (the one call that would) is only reached
  * once this org has a paddleCustomerId, which none of these tests give it.
  * Prerequisites: docker compose up -d, migrations applied.
@@ -150,6 +150,58 @@ describe("billing routes", () => {
       expect(org.paddleSubscriptionId).toBe(subscriptionId);
       expect(org.paddleCustomerId).toBe(customerId);
       expect(org.subscriptionStatus).toBe("active");
+    });
+
+    it("a valid subscription.created event with a Starter monthly price moves the org onto the Starter plan", async () => {
+      const starterOwner = await signup(app, `billing-starter-${suffix}@example.com`, password, `Billing Starter Org ${suffix}`);
+      const rawBody = JSON.stringify(
+        buildSubscriptionEventBody({
+          eventType: "subscription.created",
+          organizationId: starterOwner.organizationId,
+          status: "active",
+          priceId: env.PADDLE_STARTER_PRICE_ID_MONTHLY,
+        }),
+      );
+
+      const response = await app.inject({
+        method: "POST",
+        url: "/billing/webhook",
+        headers: { "content-type": "application/json", "paddle-signature": signWebhook(rawBody) },
+        payload: rawBody,
+      });
+
+      expect(response.statusCode).toBe(200);
+
+      const org = await withTenantTransaction(starterOwner.organizationId, (tx) =>
+        tx.organization.findUniqueOrThrow({ where: { id: starterOwner.organizationId } }),
+      );
+      expect(org.plan).toBe("starter");
+    });
+
+    it("a valid subscription.created event with an Advanced yearly price moves the org onto the Advanced plan", async () => {
+      const advancedOwner = await signup(app, `billing-advanced-${suffix}@example.com`, password, `Billing Advanced Org ${suffix}`);
+      const rawBody = JSON.stringify(
+        buildSubscriptionEventBody({
+          eventType: "subscription.created",
+          organizationId: advancedOwner.organizationId,
+          status: "active",
+          priceId: env.PADDLE_ADVANCED_PRICE_ID_YEARLY,
+        }),
+      );
+
+      const response = await app.inject({
+        method: "POST",
+        url: "/billing/webhook",
+        headers: { "content-type": "application/json", "paddle-signature": signWebhook(rawBody) },
+        payload: rawBody,
+      });
+
+      expect(response.statusCode).toBe(200);
+
+      const org = await withTenantTransaction(advancedOwner.organizationId, (tx) =>
+        tx.organization.findUniqueOrThrow({ where: { id: advancedOwner.organizationId } }),
+      );
+      expect(org.plan).toBe("advanced");
     });
 
     it("a later subscription.canceled event reverts the org to the free plan", async () => {
