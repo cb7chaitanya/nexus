@@ -99,7 +99,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4 md:hidden">
-          <Button variant="ghost" size="icon-sm" onClick={() => setMobileNavOpen(true)}>
+          <Button variant="ghost" size="icon-sm" onClick={() => setMobileNavOpen(true)} aria-label="Open navigation menu">
             <MenuIcon />
           </Button>
           <Logo />

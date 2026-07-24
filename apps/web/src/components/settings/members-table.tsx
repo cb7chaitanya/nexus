@@ -89,7 +89,7 @@ export function MembersTable({ organizationId }: { organizationId: string }) {
                   {canModifyThisMember && (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon-sm">
+                        <Button variant="ghost" size="icon-sm" aria-label="Member actions">
                           <MoreHorizontalIcon />
                         </Button>
                       </DropdownMenuTrigger>

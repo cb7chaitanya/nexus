@@ -132,7 +132,7 @@ export function DocumentsTable({
             <TableCell>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon-sm">
+                  <Button variant="ghost" size="icon-sm" aria-label="Document actions">
                     <MoreHorizontalIcon />
                   </Button>
                 </DropdownMenuTrigger>

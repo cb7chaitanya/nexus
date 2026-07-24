@@ -92,6 +92,7 @@ export default function ApiKeysPage() {
                         <Button
                           variant="ghost"
                           size="icon-sm"
+                          aria-label={`Revoke ${key.name}`}
                           onClick={() =>
                             toast.promise(revokeApiKey.mutateAsync(key.id), {
                               loading: "Revoking…",

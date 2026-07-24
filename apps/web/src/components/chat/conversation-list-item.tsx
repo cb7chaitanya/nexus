@@ -91,6 +91,7 @@ export function ConversationListItem({
               size="icon-sm"
               className="size-6 shrink-0 opacity-0 group-hover/item:opacity-100 data-[state=open]:opacity-100"
               onClick={(e) => e.preventDefault()}
+              aria-label="Conversation actions"
             >
               <MoreHorizontalIcon className="size-3.5" />
             </Button>

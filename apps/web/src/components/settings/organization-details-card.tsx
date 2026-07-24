@@ -60,7 +60,7 @@ export function OrganizationDetailsCard({ organization }: { organization: Organi
             <div className="flex items-center gap-2">
               <p className="text-sm font-medium">{organization.name}</p>
               {canEdit && (
-                <Button variant="ghost" size="icon-sm" onClick={() => setEditing(true)}>
+                <Button variant="ghost" size="icon-sm" onClick={() => setEditing(true)} aria-label="Edit organization name">
                   <PencilIcon className="size-3.5" />
                 </Button>
               )}

@@ -93,7 +93,7 @@ export function InviteMemberDialog({
           <>
             <div className="flex items-center gap-2 rounded-md border border-border bg-muted px-3 py-2">
               <span className="flex-1 truncate font-mono text-xs">{inviteLink}</span>
-              <Button variant="ghost" size="icon-sm" onClick={copyLink}>
+              <Button variant="ghost" size="icon-sm" onClick={copyLink} aria-label={copied ? "Copied" : "Copy invite link"}>
                 {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
               </Button>
             </div>

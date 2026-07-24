@@ -101,7 +101,7 @@ export default function KnowledgeBaseDetailPage({
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="icon">
+                <Button variant="outline" size="icon" aria-label="Knowledge base actions">
                   <MoreHorizontalIcon />
                 </Button>
               </DropdownMenuTrigger>

@@ -63,11 +63,11 @@ export function ChatComposer({
           className="max-h-[200px] flex-1 resize-none bg-transparent py-1.5 text-sm outline-none placeholder:text-muted-foreground disabled:opacity-50"
         />
         {isStreaming ? (
-          <Button size="icon" variant="secondary" className="shrink-0" onClick={onStop}>
+          <Button size="icon" variant="secondary" className="shrink-0" onClick={onStop} aria-label="Stop generating">
             <SquareIcon className="size-3.5 fill-current" />
           </Button>
         ) : (
-          <Button size="icon" className="shrink-0" onClick={submit} disabled={disabled}>
+          <Button size="icon" className="shrink-0" onClick={submit} disabled={disabled} aria-label="Send message">
             <ArrowUpIcon />
           </Button>
         )}

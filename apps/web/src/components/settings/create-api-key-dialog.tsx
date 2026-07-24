@@ -84,7 +84,7 @@ export function CreateApiKeyDialog({
           <>
             <div className="flex items-center gap-2 rounded-md border border-border bg-muted px-3 py-2">
               <span className="flex-1 truncate font-mono text-xs">{createdKey}</span>
-              <Button variant="ghost" size="icon-sm" onClick={copyKey}>
+              <Button variant="ghost" size="icon-sm" onClick={copyKey} aria-label={copied ? "Copied" : "Copy key"}>
                 {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
               </Button>
             </div>
