@@ -17,7 +17,7 @@ export interface Organization {
   id: string;
   name: string;
   slug: string;
-  plan: "free" | "pro" | "enterprise";
+  plan: "free" | "starter" | "pro" | "advanced" | "enterprise";
   // Paddle linkage — all null for an org that's never subscribed.
   // Billing-reconciliation-owned, see apps/api/src/routes/billing.ts;
   // never set by any member-facing route.
