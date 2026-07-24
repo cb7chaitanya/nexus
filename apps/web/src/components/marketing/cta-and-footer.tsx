@@ -6,11 +6,9 @@ import { Logo } from "@/components/logo";
 
 export function CtaSection() {
   return (
-    <section className="border-t border-border/60 py-24">
+    <section className="border-t border-border/60 py-20 sm:py-28">
       <div className="mx-auto max-w-6xl px-6 text-center">
-        <h2 className="text-3xl font-semibold tracking-tight text-balance">
-          Ready to give your product a memory?
-        </h2>
+        <h2 className="text-h2 text-balance">Ready to give your product a memory?</h2>
         <p className="mx-auto mt-3 max-w-md text-muted-foreground text-pretty">
           Create your first knowledge base in under five minutes.
         </p>

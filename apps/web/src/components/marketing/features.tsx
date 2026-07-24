@@ -53,10 +53,10 @@ const supportingFeatures = [
 
 export function Features() {
   return (
-    <section id="features" className="border-t border-border/60 py-24">
+    <section id="features" className="border-t border-border/60 py-20 sm:py-28">
       <div className="mx-auto max-w-6xl px-6">
         <div className="max-w-xl">
-          <h2 className="text-3xl font-semibold tracking-tight text-balance">
+          <h2 className="text-h2 text-balance">
             Everything you need to ship RAG, nothing you have to build yourself
           </h2>
           <p className="mt-3 text-muted-foreground text-pretty">

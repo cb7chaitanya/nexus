@@ -34,10 +34,10 @@ const tiers = [
 
 export function PricingSection() {
   return (
-    <section id="pricing" className="border-t border-border/60 py-24">
+    <section id="pricing" className="border-t border-border/60 py-20 sm:py-28">
       <div className="mx-auto max-w-6xl px-6">
         <div className="max-w-xl">
-          <h2 className="text-3xl font-semibold tracking-tight text-balance">Plans that grow with your product</h2>
+          <h2 className="text-h2 text-balance">Plans that grow with your product</h2>
           <p className="mt-3 text-muted-foreground text-pretty">
             Every plan starts the same way: create an account and ship your first knowledge base in minutes.
           </p>
@@ -46,9 +46,9 @@ export function PricingSection() {
           {tiers.map((tier) => (
             <Card
               key={tier.plan}
-              className={cn("gap-0 p-6", tier.highlighted && "border-primary/50 shadow-sm")}
+              className={cn("gap-0 p-6", tier.highlighted && "border-primary/50")}
             >
-              <h3 className="text-sm font-semibold">{tier.name}</h3>
+              <h3 className="text-h4">{tier.name}</h3>
               <p className="mt-1.5 text-sm text-muted-foreground">{tier.tagline}</p>
               <ul className="mt-6 space-y-2.5">
                 {tier.features.map((feature) => (
