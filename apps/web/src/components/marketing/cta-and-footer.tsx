@@ -22,7 +22,7 @@ export function CtaSection() {
   );
 }
 
-export function SiteFooter() {
+export function SiteFooter({ isAuthenticated }: { isAuthenticated: boolean }) {
   return (
     <footer className="border-t border-border/60 py-12">
       <div className="mx-auto flex max-w-6xl flex-col gap-10 px-6 sm:flex-row sm:justify-between">
@@ -61,16 +61,26 @@ export function SiteFooter() {
           <div>
             <p className="font-medium text-foreground">Account</p>
             <ul className="mt-3 space-y-2 text-muted-foreground">
-              <li>
-                <Link href="/login" className="transition-colors hover:text-foreground">
-                  Log in
-                </Link>
-              </li>
-              <li>
-                <Link href="/signup" className="transition-colors hover:text-foreground">
-                  Sign up
-                </Link>
-              </li>
+              {isAuthenticated ? (
+                <li>
+                  <Link href="/dashboard" className="transition-colors hover:text-foreground">
+                    Dashboard
+                  </Link>
+                </li>
+              ) : (
+                <>
+                  <li>
+                    <Link href="/login" className="transition-colors hover:text-foreground">
+                      Log in
+                    </Link>
+                  </li>
+                  <li>
+                    <Link href="/signup" className="transition-colors hover:text-foreground">
+                      Sign up
+                    </Link>
+                  </li>
+                </>
+              )}
             </ul>
           </div>
         </div>
