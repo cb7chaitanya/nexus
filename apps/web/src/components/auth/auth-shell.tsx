@@ -24,7 +24,7 @@ export function AuthShell({
           <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
           <p className="mt-1.5 text-sm text-muted-foreground">{description}</p>
         </div>
-        <div className="rounded-xl border border-border bg-card p-6 shadow-sm">{children}</div>
+        <div className="rounded-xl border border-border bg-card p-6">{children}</div>
         <p className="mt-6 text-center text-sm text-muted-foreground">{footer}</p>
       </div>
     </div>
