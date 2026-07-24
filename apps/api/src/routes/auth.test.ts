@@ -244,6 +244,30 @@ describe("auth routes", () => {
     expect(body.organizations).toHaveLength(1);
   });
 
+  it("resolves auth from a duplicate-named cookie when a stale value precedes the live one", async () => {
+    // Simulates a browser still carrying a pre-SESSION_COOKIE_DOMAIN
+    // host-only cookie alongside the current domain-scoped one — both
+    // sent under the same name on requests to this API's own host. A raw
+    // Cookie header is the only way to construct this: app.inject()'s
+    // `cookies` option is a plain object, which can't represent a
+    // repeated name.
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email: `otp-${suffix}@example.com`, password },
+    });
+    const sessionCookie = login.cookies.find((c) => c.name === SESSION_COOKIE_NAME);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/auth/me",
+      headers: { cookie: `${SESSION_COOKIE_NAME}=not-a-real-session-token; ${SESSION_COOKIE_NAME}=${sessionCookie!.value}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().user.email).toBe(`otp-${suffix}@example.com`);
+  });
+
   it("rejects /auth/me with no session cookie", async () => {
     const response = await app.inject({ method: "GET", url: "/auth/me" });
     expect(response.statusCode).toBe(401);

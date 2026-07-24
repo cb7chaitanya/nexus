@@ -3,7 +3,7 @@ import type { OrgRole } from "@raas/db";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { requireMembership } from "../lib/membership.js";
-import { resolveSession } from "../lib/session.js";
+import { resolveSession, type AuthenticatedSession } from "../lib/session.js";
 import { hasAtLeastRole } from "../lib/roles.js";
 
 export const SESSION_COOKIE_NAME = "raas_session";
@@ -23,12 +23,7 @@ declare module "fastify" {
  * having run first, never re-implements session resolution itself.
  */
 export async function requireAuth(request: FastifyRequest, _reply: FastifyReply): Promise<void> {
-  const token = request.cookies[SESSION_COOKIE_NAME];
-  if (!token) {
-    throw ApiError.unauthorized();
-  }
-
-  const session = await resolveSession(token);
+  const session = await resolveSessionFromRequest(request);
   if (!session) {
     throw ApiError.unauthorized();
   }
@@ -39,6 +34,41 @@ export async function requireAuth(request: FastifyRequest, _reply: FastifyReply)
   // never the session token/cookie itself, only the id (see
   // @raas/logger's LogBindings and app.ts's requestIdLogLabel).
   request.log = request.log.child({ userId: session.userId });
+}
+
+/**
+ * Reads every value for SESSION_COOKIE_NAME directly off the raw Cookie
+ * header and tries each until one resolves to a live session, rather than
+ * trusting request.cookies (Fastify's parsed view, which only exposes one
+ * value per name — whichever its parser happens to pick when a name
+ * repeats). A repeat happens for any browser still carrying a session
+ * cookie from before SESSION_COOKIE_DOMAIN existed (see cookies.ts):
+ * that old host-only cookie and the current domain-scoped one are both
+ * sent, under the same name, on every request to this API's own host —
+ * but NOT to apps/web's host, which only ever matches the domain-scoped
+ * one. That asymmetry is exactly what made getServerSession() (web)
+ * consistently disagree with requireAuth (api, via the old single-value
+ * read) for the same browser, which is what turned one stale cookie into
+ * a permanent redirect loop between /login and /dashboard for anyone
+ * carrying one — trying every candidate here breaks that outright,
+ * immediately, with no login/logout round trip required.
+ */
+async function resolveSessionFromRequest(request: FastifyRequest): Promise<AuthenticatedSession | null> {
+  const rawCookieHeader = request.headers.cookie;
+  if (!rawCookieHeader) return null;
+
+  const prefix = `${SESSION_COOKIE_NAME}=`;
+  const candidates = rawCookieHeader
+    .split(";")
+    .map((part) => part.trim())
+    .filter((part) => part.startsWith(prefix))
+    .map((part) => decodeURIComponent(part.slice(prefix.length)));
+
+  for (const token of candidates) {
+    const session = await resolveSession(token);
+    if (session) return session;
+  }
+  return null;
 }
 
 /**
