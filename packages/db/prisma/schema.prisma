@@ -52,9 +52,9 @@ model User {
 // See docs/decisions.md for the full reasoning.
 
 model Organization {
-  id        String   @id @default(uuid())
-  name      String
-  slug      String   @unique
+  id                    String    @id @default(uuid())
+  name                  String
+  slug                  String    @unique
   // free | pro | enterprise — billing-reconciliation-owned: written only by
   // apps/api/src/routes/billing.ts's Paddle webhook handler, never by a
   // member-facing route. apps/api/src/routes/organizations.ts's PATCH
@@ -62,23 +62,23 @@ model Organization {
   // this model — deliberately has no code path that can set this field,
   // for any role; see packages/shared/src/schemas/organizations.ts's
   // updateOrganizationSchema.
-  plan      String   @default("free")
+  plan                  String    @default("free")
   // Paddle linkage — all nullable, since a free-plan org that's never
   // subscribed has none of these. Only ever written by the webhook handler.
-  paddleCustomerId     String?
-  paddleSubscriptionId String?
+  paddleCustomerId      String?
+  paddleSubscriptionId  String?
   // Paddle's own status strings verbatim (active, canceled, past_due,
   // paused, ...) — not remapped to a local enum, so a Paddle status this
   // app doesn't yet have special handling for still gets stored accurately
   // rather than coerced into the nearest known value.
-  subscriptionStatus String?
+  subscriptionStatus    String?
   // The webhook event's own occurred_at, NOT this row's updatedAt — Paddle
   // does not guarantee webhook delivery order, so this is the guard that
   // stops a late-arriving stale event from clobbering newer state (only
   // applied when the incoming event's occurred_at is newer than this).
   subscriptionUpdatedAt DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
   members        OrganizationMember[]
   workspaces     Workspace[]
@@ -91,6 +91,7 @@ model Organization {
   conversations  Conversation[]
   messages       Message[]
   usageLimit     OrganizationUsageLimit?
+  llmConfig      OrganizationLlmConfig?
 }
 
 enum OrgRole {
@@ -257,7 +258,7 @@ model KnowledgeBase {
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
 
-  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization  Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   documents     Document[]
   chunks        DocumentChunk[]
   conversations Conversation[]
@@ -377,7 +378,7 @@ model Document {
 // which is why the old single-column index was dropped rather than
 // kept alongside this one (see migration 20260720120001).
 model DocumentChunk {
-  id              String   @id @default(uuid())
+  id              String                       @id @default(uuid())
   organizationId  String
   knowledgeBaseId String
   documentId      String
@@ -388,7 +389,7 @@ model DocumentChunk {
   charStart       Int
   charEnd         Int
   embedding       Unsupported("vector(1536)")?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime                     @default(now())
 
   organization  Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   knowledgeBase KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
@@ -447,6 +448,27 @@ model OrganizationUsageLimit {
   maxChatTokensPerDay      Int
   createdAt                DateTime @default(now())
   updatedAt                DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+// Bring-your-own-LLM: an org can point its chat traffic at its own
+// OpenAI/Anthropic/Groq account instead of Nexus-managed inference.
+// Absence of a row means Nexus-managed — see
+// apps/api/src/lib/llm-provider.ts's resolveLlmProvider. encryptedApiKey
+// is AES-256-GCM ciphertext (packages/crypto), never the raw key —
+// nothing in this codebase ever stores a customer-supplied provider key
+// in a recoverable-without-decryption form, and the decrypted value is
+// never sent back to the client after it's saved.
+model OrganizationLlmConfig {
+  organizationId      String    @id
+  provider            String // "openai" | "anthropic" | "groq"
+  model               String
+  encryptedApiKey     String
+  lastValidatedAt     DateTime?
+  lastValidationError String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 }
